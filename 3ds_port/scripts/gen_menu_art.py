@@ -44,6 +44,16 @@ DOCK_Y = 204
 DOCK = [(0, (24, 72, 56)), (1, (10, 32, 24))]
 
 
+def set_height(h):
+    """A taller canvas: the dock stays 36 rows at the foot, the gem centred
+    in the space between the strips, the battle art's backdrop as tall."""
+    global H, DOCK_Y, GEM_CENTRE
+    extra = h - 240
+    H, DOCK_Y = h, 204 + extra
+    GEM_CENTRE = (GEM_CENTRE[0], 112 + extra // 2)
+    G.set_height(h)
+
+
 def backdrop():
     SS = G.SS
     p = G.Pic(W, H, (0, 0, 0))
@@ -122,7 +132,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("--output", required=True)
     ap.add_argument("--png", help="also write the backdrop as a PNG, to look at")
+    ap.add_argument("--height", type=int, default=240,
+                    help="the canvas' height (CTR_BOTTOM_HEIGHT): 280 on Android, the dock at its foot")
     args = ap.parse_args()
+    set_height(args.height)
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     Path(args.output).write_bytes(build())
     if args.png:

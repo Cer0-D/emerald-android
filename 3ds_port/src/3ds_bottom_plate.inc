@@ -1193,7 +1193,7 @@ static inline u16 Blend565(u16 p, int t, u16 c)
 /* A plate with its top-left at (x, y); returns the top of its face (lower when pressed). */
 static int DrawPlateSpec(int x, int y, const PlateSpec *s)
 {
-    int x0 = x - PLATE_ML + sOX, y0 = y - PLATE_MT;
+    int x0 = x - PLATE_ML + sOX, y0 = y - PLATE_MT + sOY;
     const PlatePic *p;
     int i0, i1, j0, j1;
 
@@ -1361,7 +1361,7 @@ static inline u32 PassBits(u16 w, int pass)
 static int StyledPass(const Font *font, const u8 *str, int x, int y, u16 colour, u16 shadow, int pass)
 {
     int left = x;
-    bool8 lineOut = y + font->height + 1 <= sClipY0 || y - 1 >= sClipY1;
+    bool8 lineOut = y + sOY + font->height + 1 <= sClipY0 || y + sOY - 1 >= sClipY1;
 
     for (u16 g; (g = NextGlyph(&str)) != 0xFFFF;)
     {
@@ -1371,7 +1371,7 @@ static int StyledPass(const Font *font, const u8 *str, int x, int y, u16 colour,
         {
             x = left;
             y += font->lineHeight;
-            lineOut = y + font->height + 1 <= sClipY0 || y - 1 >= sClipY1;
+            lineOut = y + sOY + font->height + 1 <= sClipY0 || y + sOY - 1 >= sClipY1;
             continue;
         }
         width = GlyphWidth(font, g) > 16 ? 16 : GlyphWidth(font, g);

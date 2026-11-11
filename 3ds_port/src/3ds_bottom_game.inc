@@ -11,6 +11,7 @@
 
 static const Rgb sFieldMove = {64, 120, 200};
 
+
 /* Ids of the native views' things: a box, an entry of the open menu, the
  * message going on. CANCEL, YES and NO are the shared ones. */
 enum { HIT_NAT_SLOT = HIT_ROW, HIT_NAT_ENTRY = HIT_ROW + 8, HIT_NAT_MSG = HIT_ROW + 16 };
@@ -89,8 +90,20 @@ static const u8 *HpText(u16 hp, u16 maxHp)
 #define PARTY_LEFT_W 104
 #define PARTY_RIGHT_X (AREA_X + PARTY_LEFT_W + 4)
 #define PARTY_RIGHT_W (AREA_W - PARTY_LEFT_W - 4)
-#define PARTY_ROW 33
-#define PARTY_ROW_H 30
+/* The five boxes on the right fill the column's height: 30 rows each on the
+ * 3DS, 38 with the Thor's extra 40. The lead's plate, the prompt and CANCEL
+ * on the left share the extra rows likewise. A box that tall has room for
+ * its level and HP in the normal font (PARTY_SUB). */
+#define PARTY_ROW_H (30 + CTR_BOTTOM_EXTRA / 5)
+#define PARTY_ROW (PARTY_ROW_H + 3)
+#define PARTY_PAD ((PARTY_ROW_H - 30) / 2)
+#define PARTY_SUB (CTR_BOTTOM_EXTRA ? &sNormal : &sSmall)
+#define PARTY_LEAD_H (84 + CTR_BOTTOM_EXTRA * 2 / 5)
+#define PARTY_LEAD_PAD ((PARTY_LEAD_H - 84) / 2)
+#define PARTY_PROMPT_Y (GV_Y + PARTY_LEAD_H + 3)
+#define PARTY_PROMPT_H (44 + CTR_BOTTOM_EXTRA * 3 / 10)
+#define PARTY_CANCEL_Y (PARTY_PROMPT_Y + PARTY_PROMPT_H + 3)
+#define PARTY_CANCEL_H (GV_BOTTOM - PARTY_CANCEL_Y)
 #define PARTY_LINE 15
 
 /* A party menu's icon as the game's moves: its frame and bounce. Its first
@@ -135,13 +148,13 @@ static bool8 PartyIconRect(const ViewState *s, int slot, int *x0, int *y0, int *
 
     if (slot == lead)
     {
-        cx = AREA_X + 19;
-        cy = AREA_Y + 20;
+        cx = AREA_X + 19 + PARTY_LEAD_PAD / 2;
+        cy = GV_Y + 20 + PARTY_LEAD_PAD;
     }
     else if (v->state == CTR_PARTY_VIEW_LIST && slot > 0)
     {
-        cx = PARTY_RIGHT_X + 18;
-        cy = AREA_Y + (slot - 1) * PARTY_ROW + 15;
+        cx = PARTY_RIGHT_X + 18 + PARTY_PAD;
+        cy = GV_Y + (slot - 1) * PARTY_ROW + PARTY_ROW_H / 2;
     }
     else
         return FALSE;
@@ -197,31 +210,35 @@ static void DrawPartyLead(const ViewState *s, int slot)
     int x = AREA_X, oy;
     bool8 tappable = v->state == CTR_PARTY_VIEW_LIST;
 
-    oy = PlateEx(x, AREA_Y, PARTY_LEFT_W, 84, PartyBoxColour(s, slot), tappable ? PartyBoxState(s, slot)
-                 : PLATE_STATE_NORMAL, 40, 25, PlateCut(84), 0);
+    /* A taller plate (PARTY_LEAD_PAD): the icon lower, the rows under it
+     * spread out, its level and HP in the normal font. */
+    const int p = PARTY_LEAD_PAD;
+
+    oy = PlateEx(x, GV_Y, PARTY_LEFT_W, PARTY_LEAD_H, PartyBoxColour(s, slot), tappable ? PartyBoxState(s, slot)
+                 : PLATE_STATE_NORMAL, 40, 25, PlateCut(PARTY_LEAD_H), 0);
     if (!mon->species)
         return;
-    PartyIconAt(s, slot, x + 19, oy + 20);
-    PartyHeldSign(s, slot, x + 19, oy + 20);
+    PartyIconAt(s, slot, x + 19 + p / 2, oy + 20 + p);
+    PartyHeldSign(s, slot, x + 19 + p / 2, oy + 20 + p);
     if (!mon->isEgg)
     {
-        StyledRight(&sSmall, LevelText(mon->level), x + 98, oy + 6, STYLE_WHITE);
-        GenderSign(x + 88, oy + 20, mon->gender);
+        StyledRight(PARTY_SUB, LevelText(mon->level), x + 98, oy + 6, STYLE_WHITE);
+        GenderSign(x + 88, oy + 20 + p, mon->gender);
     }
-    StyledStr(FitFont(&sNormal, mon->nick, 90), mon->nick, x + 8, oy + 40, STYLE_WHITE);
+    StyledStr(FitFont(&sNormal, mon->nick, 90), mon->nick, x + 8, oy + 40 + 2 * p, STYLE_WHITE);
     if (v->desc[slot] != CTR_PARTY_DESC_NONE && v->state == CTR_PARTY_VIEW_LIST)
     {
         const u8 *desc = CtrParty_DescText(v->desc[slot]);
 
-        TextIn(desc, x, oy + 56, PARTY_LEFT_W, 22, &sNormal, 'r', DescIsYes(v->desc[slot]) ? STYLE_WHITE : STYLE_SOFT, 6);
+        TextIn(desc, x, oy + 56 + 2 * p, PARTY_LEFT_W, 22, &sNormal, 'r', DescIsYes(v->desc[slot]) ? STYLE_WHITE : STYLE_SOFT, 6);
     }
     else if (!mon->isEgg)
     {
-        HpBar(x + 8, oy + 60, 88, mon->hp, mon->maxHp);
-        StyledRight(&sSmall, HpText(mon->hp, mon->maxHp), x + 98, oy + 67, STYLE_WHITE);
+        HpBar(x + 8, oy + 60 + 2 * p, 88, mon->hp, mon->maxHp);
+        StyledRight(PARTY_SUB, HpText(mon->hp, mon->maxHp), x + 98, oy + 67 + 2 * p - (p ? 2 : 0), STYLE_WHITE);
     }
     if (tappable)
-        AddHit(x, AREA_Y, PARTY_LEFT_W, 84, HIT_NAT_SLOT + slot);
+        AddHit(x, GV_Y, PARTY_LEFT_W, PARTY_LEAD_H, HIT_NAT_SLOT + slot);
 }
 
 static void DrawPartyBox(const ViewState *s, int slot, int by)
@@ -236,21 +253,25 @@ static void DrawPartyBox(const ViewState *s, int slot, int by)
         return;
     }
     oy = PlateEx(x, by, w, PARTY_ROW_H, PartyBoxColour(s, slot), PartyBoxState(s, slot), 36, 30, PlateCut(PARTY_ROW_H), 0);
-    PartyIconAt(s, slot, x + 18, oy + 15);
-    PartyHeldSign(s, slot, x + 18, oy + 15);
-    StyledStr(FitFont(&sNormal, mon->nick, 80), mon->nick, x + 44, TextY(oy, 16, &sNormal) + 1, STYLE_WHITE);
+    /* A taller box (PARTY_PAD): the icon in its middle, the name and the
+     * level (normal font) a line each, the HP bar and its numbers likewise. */
+    const int p = PARTY_PAD, cy = oy + PARTY_ROW_H / 2;
+
+    PartyIconAt(s, slot, x + 18 + p, cy);
+    PartyHeldSign(s, slot, x + 18 + p, cy);
+    StyledStr(FitFont(&sNormal, mon->nick, 80), mon->nick, x + 44 + p, TextY(oy, 16, &sNormal) + 1 + p / 2, STYLE_WHITE);
     if (!mon->isEgg)
     {
-        StyledStr(&sSmall, LevelText(mon->level), x + 44, oy + 15, STYLE_WHITE);
-        GenderSign(x + 74, oy + 15, mon->gender);
+        StyledStr(PARTY_SUB, LevelText(mon->level), x + 44 + p, oy + 15 + p, STYLE_WHITE);
+        GenderSign(x + 76 + 2 * p, oy + 15 + 3 * p / 2, mon->gender);
     }
     if (v->desc[slot] != CTR_PARTY_DESC_NONE)
         TextIn(CtrParty_DescText(v->desc[slot]), x + 120, oy, w - 120, PARTY_ROW_H, &sNormal, 'r',
                DescIsYes(v->desc[slot]) ? STYLE_WHITE : STYLE_SOFT, 10);
     else if (!mon->isEgg)
     {
-        HpBar(x + 130, oy + 8, 68, mon->hp, mon->maxHp);
-        StyledRight(&sSmall, HpText(mon->hp, mon->maxHp), x + w - 8, oy + 14, STYLE_WHITE);
+        HpBar(x + 130, oy + 8 + p / 2, 68, mon->hp, mon->maxHp);
+        StyledRight(PARTY_SUB, HpText(mon->hp, mon->maxHp), x + w - 8, oy + 14 + p, STYLE_WHITE);
     }
     AddHit(x, by, w, PARTY_ROW_H, HIT_NAT_SLOT + slot);
 }
@@ -271,11 +292,11 @@ static void EntryDot(int cx, int cy, Rgb colour)
 static void DrawPartyEntries(const ViewState *s, int bottom)
 {
     const struct CtrPartyView *v = &s->pv;
-    int n = v->numEntries, pitch = n <= 5 ? PARTY_ROW : (AREA_H + 3) / (n ? n : 1), h = pitch - 3;
+    int n = v->numEntries, pitch = n <= 5 ? PARTY_ROW : (GV_H + 3) / (n ? n : 1), h = pitch - 3;
 
     for (int i = 0; i < n; ++i)
     {
-        int by = AREA_Y + i * pitch, oy;
+        int by = GV_Y + i * pitch, oy;
         bool8 pressed = s->pressed == HIT_NAT_ENTRY + i;
         Rgb colour = i == v->cancelEntry ? sCancelGrey : (v->fieldMove >> i) & 1 ? sFieldMove : sSlate;
 
@@ -297,12 +318,12 @@ static int DrawPartyMessage(const ViewState *s)
     int lines, h, y, oy;
 
     if (!v->message && !v->yesNo)
-        return AREA_Y + AREA_H;
+        return GV_BOTTOM;
     lines = v->message ? TextLines(v->msg, 0, 0, PARTY_RIGHT_W - 16, PARTY_LINE, 4, &sNormal, STYLE_INK, FALSE) : 0;
     if (lines < 1)
         lines = 1;
     h = 12 + lines * PARTY_LINE;
-    y = AREA_Y + AREA_H - h;
+    y = GV_BOTTOM - h;
     if (v->message)
     {
         oy = Plate(PARTY_RIGHT_X, y, PARTY_RIGHT_W, h, sCreamPlate, PLATE_STATE_NORMAL);
@@ -311,7 +332,7 @@ static int DrawPartyMessage(const ViewState *s)
             AddHit(PARTY_RIGHT_X, y, PARTY_RIGHT_W, h, HIT_NAT_MSG);
     }
     else
-        h = 0, y = AREA_Y + AREA_H + 3;
+        h = 0, y = GV_BOTTOM + 3;
     if (v->yesNo)
     {
         int bw = (PARTY_RIGHT_W - 4) / 2, by = y - PARTY_ROW;
@@ -353,10 +374,10 @@ static void DrawPartyStats(const ViewState *s)
     /* The task's order (HP ATK DEF SPEED SPATK SPDEF) as the window lists it. */
     static const u8 order[6] = {0, 1, 2, 4, 5, 3};
     const struct CtrPartyView *v = &s->pv;
-    int x = PARTY_RIGHT_X, w = PARTY_RIGHT_W, rowH = (AREA_H - 12) / 6, oy;
+    int x = PARTY_RIGHT_X, w = PARTY_RIGHT_W, rowH = (GV_H - 12) / 6, oy;
 
-    FlatPlate(x, AREA_Y, w, AREA_H);
-    oy = AREA_Y;
+    FlatPlate(x, GV_Y, w, GV_H);
+    oy = GV_Y;
     for (int i = 0; i < 6; ++i)
     {
         int k = order[i], ry = oy + 6 + i * rowH, ty = TextY(ry, rowH, &sNormal);
@@ -374,7 +395,7 @@ static void DrawPartyStats(const ViewState *s)
         else
             StyledRight(&sNormal, Number(v->statsAfter[k], 3, STR_CONV_MODE_LEFT_ALIGN), x + w - 12, ty, STYLE_INK);
     }
-    AddHit(x, AREA_Y, w, AREA_H, HIT_NAT_MSG);
+    AddHit(x, GV_Y, w, GV_H, HIT_NAT_MSG);
 }
 
 static void DrawGameParty(const ViewState *s)
@@ -384,15 +405,16 @@ static void DrawGameParty(const ViewState *s)
     int lead = (menu || stats) && v->chosen >= 0 && v->chosen < PARTY_SIZE ? v->chosen : 0, oy, bottom;
 
     DrawPartyLead(s, lead);
-    oy = Plate(AREA_X, AREA_Y + 87, PARTY_LEFT_W, 44, sCreamPlate, PLATE_STATE_NORMAL);
-    TextLines(v->prompt, AREA_X + 8, oy + 5, PARTY_LEFT_W - 14, PARTY_LINE, 2, &sNormal, STYLE_INK, TRUE);
+    oy = Plate(AREA_X, PARTY_PROMPT_Y, PARTY_LEFT_W, PARTY_PROMPT_H, sCreamPlate, PLATE_STATE_NORMAL);
+    TextLines(v->prompt, AREA_X + 8, oy + 5 + (PARTY_PROMPT_H - 44) / 2, PARTY_LEFT_W - 14, PARTY_LINE, 2, &sNormal,
+              STYLE_INK, TRUE);
     {
         bool8 pressed = s->pressed == HIT_CANCEL;
 
-        oy = Plate(AREA_X, AREA_Y + 134, PARTY_LEFT_W, 30, pressed ? sEmerald : sSlate,
+        oy = Plate(AREA_X, PARTY_CANCEL_Y, PARTY_LEFT_W, PARTY_CANCEL_H, pressed ? sEmerald : sSlate,
                    pressed ? PLATE_STATE_PRESSED : PLATE_STATE_NORMAL);
-        TextIn(gText_Cancel2, AREA_X, oy, PARTY_LEFT_W, 30, &sNormal, 'c', STYLE_WHITE, 4);
-        AddHit(AREA_X, AREA_Y + 134, PARTY_LEFT_W, 30, HIT_CANCEL);
+        TextIn(gText_Cancel2, AREA_X, oy, PARTY_LEFT_W, PARTY_CANCEL_H, &sNormal, 'c', STYLE_WHITE, 4);
+        AddHit(AREA_X, PARTY_CANCEL_Y, PARTY_LEFT_W, PARTY_CANCEL_H, HIT_CANCEL);
     }
     if (stats)
     {
@@ -407,7 +429,7 @@ static void DrawGameParty(const ViewState *s)
     }
     for (int k = 1; k < PARTY_SIZE; ++k)
     {
-        int by = AREA_Y + (k - 1) * PARTY_ROW;
+        int by = GV_Y + (k - 1) * PARTY_ROW;
 
         if (by + PARTY_ROW_H > bottom)
             break;
@@ -932,6 +954,7 @@ enum
     HIT_BAG_PREV = HIT_ROW,
     HIT_BAG_NEXT,
     HIT_BAG_DESC,           /* moving an item: left where it was */
+    HIT_BAG_CLOSE,          /* CLOSE BAG's description ("Return to ..."): closes it */
     HIT_BAG_ENTRY = HIT_ROW + 4,    /* + entry shown */
     HIT_BAG_COUNT = HIT_ROW + 12,   /* -10, -1, +1, +10 */
 };
@@ -941,10 +964,14 @@ enum
 #define BAG_LIST_W (AREA_W - BAG_LEFT_W - 4 - 12)
 #define BAG_BAR_X (BAG_LIST_X + BAG_LIST_W + 2)
 #define BAG_ROW_H 14
-#define BAG_LIST_TOP (AREA_Y + 3)
+/* The list as many rows as CTR_BAG_ROWS (ten on the Thor: the description
+ * under it a little taller too). */
+#define BAG_LIST_TOP (GV_Y + 3)
 #define BAG_LIST_H (CTR_BAG_ROWS * BAG_ROW_H + 6)
-#define BAG_FOOT_Y (AREA_Y + BAG_LIST_H + 3)
-#define BAG_FOOT_H (AREA_Y + AREA_H - BAG_FOOT_Y)
+#define BAG_FOOT_Y (GV_Y + BAG_LIST_H + 3)
+#define BAG_FOOT_H (GV_BOTTOM - BAG_FOOT_Y)
+/* The left column's room over the 3DS's eight rows. */
+#define BAG_MORE (BAG_LIST_H - (8 * BAG_ROW_H + 6))
 
 static const s8 sBagSteps[4] = {-10, -1, 1, 10};
 
@@ -958,19 +985,19 @@ static void DrawBagPocket(const ViewState *s)
     const struct CtrBagView *v = &s->bv;
     int x = AREA_X, oy, slot = BagPic(v->female, v->bagFrame);
 
-    oy = Plate(x, AREA_Y, BAG_LEFT_W, 20, sEmerald, PLATE_STATE_NORMAL);
+    oy = Plate(x, GV_Y, BAG_LEFT_W, 20, sEmerald, PLATE_STATE_NORMAL);
     TextIn(gPocketNamesStringsTable[v->pocket], x + 10, oy, BAG_LEFT_W - 20, 20, &sSmall, 'c', STYLE_WHITE, 2);
     if (v->pocketSwitch && BagListShown(v))
     {
         DrawArrow(x + 5, oy + 6, -1, PackRgb(255, 255, 255));
         DrawArrow(x + BAG_LEFT_W - 9, oy + 6, 1, PackRgb(255, 255, 255));
-        AddHit(x, AREA_Y, BAG_LEFT_W / 2, 24, HIT_BAG_PREV);
-        AddHit(x + BAG_LEFT_W / 2, AREA_Y, BAG_LEFT_W - BAG_LEFT_W / 2, 24, HIT_BAG_NEXT);
+        AddHit(x, GV_Y, BAG_LEFT_W / 2, 24, HIT_BAG_PREV);
+        AddHit(x + BAG_LEFT_W / 2, GV_Y, BAG_LEFT_W - BAG_LEFT_W / 2, 24, HIT_BAG_NEXT);
     }
     if (slot >= 0)
-        DrawSprite(sBagPic.tiles, 8, 8, x + (BAG_LEFT_W - 64) / 2, AREA_Y + 26, sBagPic.pal.c);
+        DrawSprite(sBagPic.tiles, 8, 8, x + (BAG_LEFT_W - 64) / 2, GV_Y + 26 + BAG_MORE / 2, sBagPic.pal.c);
     for (int k = 0; k < POCKETS_COUNT; ++k)
-        EntryDot(x + BAG_LEFT_W / 2 + (2 * k - (POCKETS_COUNT - 1)) * 5, AREA_Y + 100, k == v->pocket ? sEmerald : sLight);
+        EntryDot(x + BAG_LEFT_W / 2 + (2 * k - (POCKETS_COUNT - 1)) * 5, GV_Y + 100 + BAG_MORE, k == v->pocket ? sEmerald : sLight);
 }
 
 static void DrawBagList(const ViewState *s)
@@ -978,7 +1005,7 @@ static void DrawBagList(const ViewState *s)
     const struct CtrBagView *v = &s->bv;
     int x = BAG_LIST_X, w = BAG_LIST_W;
 
-    FlatPlate(x, AREA_Y, w, BAG_LIST_H);
+    FlatPlate(x, GV_Y, w, BAG_LIST_H);
     for (int i = 0; i < v->numRows; ++i)
     {
         int ry = BAG_LIST_TOP + i * BAG_ROW_H, oy = ry;
@@ -1009,7 +1036,7 @@ static void DrawBagList(const ViewState *s)
     }
     /* The scroll bar: the rows shown out of those the pocket has, the thumb
      * as long as the page is of the whole. */
-    Plate(BAG_BAR_X, AREA_Y, 10, BAG_LIST_H, sGroupOff, PLATE_STATE_NORMAL);
+    Plate(BAG_BAR_X, GV_Y, 10, BAG_LIST_H, sGroupOff, PLATE_STATE_NORMAL);
     if (v->total > v->numRows && v->numRows > 0)
     {
         int th = BAG_LIST_H * v->numRows / v->total, room;
@@ -1017,7 +1044,7 @@ static void DrawBagList(const ViewState *s)
         if (th < 18)
             th = 18;
         room = BAG_LIST_H - th;
-        Plate(BAG_BAR_X, AREA_Y + room * min(v->scroll, v->total - v->numRows) / (v->total - v->numRows), 10, th,
+        Plate(BAG_BAR_X, GV_Y + room * min(v->scroll, v->total - v->numRows) / (v->total - v->numRows), 10, th,
               sEmerald, PLATE_STATE_NORMAL);
     }
 }
@@ -1026,12 +1053,29 @@ static void DrawBagList(const ViewState *s)
 static void DrawBagDesc(const ViewState *s)
 {
     const struct CtrBagView *v = &s->bv;
-    int oy = PlateEx(AREA_X, BAG_FOOT_Y, AREA_W, BAG_FOOT_H, sCreamPlate, PLATE_STATE_NORMAL, 0, 25, 4, 0);
+    /* CLOSE BAG's description is a button (HIT_BAG_CLOSE): pressed, it sinks. */
+    u8 state = v->state != CTR_BAG_VIEW_SWAP && v->item == ITEM_NONE && s->pressed == HIT_BAG_CLOSE
+               ? PLATE_STATE_PRESSED : PLATE_STATE_NORMAL;
+    int oy = PlateEx(AREA_X, BAG_FOOT_Y, AREA_W, BAG_FOOT_H, sCreamPlate, state, 0, 25, 4, 0);
 
+    /* The text centred on the plate's face by its lines (the face is the
+     * plate less its lower band, 4 rows), as tall as the box grew. */
+    int lines = TextLines(v->text, 0, 0, AREA_W - 48, 13, 3, &sNormal, STYLE_INK, FALSE), ty;
+
+    if (lines < 1)
+        lines = 1;
+    ty = oy + 2 + (BAG_FOOT_H - 4 - (3 * 13 + 2)) / 2 + (3 - lines) * 13 / 2;
+    if (ty < oy + 2 || !CTR_BOTTOM_EXTRA)
+        ty = oy + 2;
     DrawItemIcon(v->item != ITEM_NONE ? v->item : ITEM_LIST_END, AREA_X + 8, oy + (BAG_FOOT_H - 24) / 2);
-    TextLines(v->text, AREA_X + 40, oy + 2, AREA_W - 48, 13, 3, &sNormal, STYLE_INK, TRUE);
+    TextLines(v->text, AREA_X + 40, ty, AREA_W - 48, 13, 3, &sNormal, STYLE_INK, TRUE);
     if (v->state == CTR_BAG_VIEW_SWAP)
         AddHit(AREA_X, BAG_FOOT_Y, AREA_W, BAG_FOOT_H, HIT_BAG_DESC);
+    /* With CLOSE BAG picked, its description reads as the way back - "Return
+     * to the battle.", "Return to the field." - and a tap on it goes there,
+     * as the entry itself does. */
+    else if (v->item == ITEM_NONE)
+        AddHit(AREA_X, BAG_FOOT_Y, AREA_W, BAG_FOOT_H, HIT_BAG_CLOSE);
 }
 
 static void DrawBagActions(const ViewState *s)
@@ -1138,6 +1182,8 @@ static void BagTap(const ViewState *s, u8 id)
         CtrBag_TapPocket(id == HIT_BAG_PREV ? -1 : 1);
     else if (id == HIT_BAG_DESC)
         CtrBag_CancelSwap();
+    else if (id == HIT_BAG_CLOSE)
+        CtrBag_Close();
     else if (id >= HIT_BAG_ENTRY && id < HIT_BAG_ENTRY + CTR_BAG_ENTRIES && id - HIT_BAG_ENTRY < v->numEntries)
         CtrMenu_PostEntry(v->entryPos[id - HIT_BAG_ENTRY]);
     else if (id >= HIT_BAG_COUNT && id < HIT_BAG_COUNT + 4)
@@ -1150,17 +1196,62 @@ static void BagTap(const ViewState *s, u8 id)
         CtrMenu_PostAck();
 }
 
-/* A touch on the list's rows: the bag's own list touch at the same place of
- * its list (CtrBag_Touch), in 1/256s of a row. TRUE when it is the list's. */
+/*
+ * A touch on the list's rows: the bag's own list touch at the same place of
+ * its list (CtrBag_Touch), in 1/256s of a row. TRUE when it is the list's.
+ *
+ * With more rows than the game's list (CTR_BAG_ROWS), a touch starting on a
+ * row the game does not show is handed over moved onto its nearest row, so
+ * a drag from there scrolls the list as any drag does; a tap there (let go
+ * where it went down) instead asks for that item (CtrBag_SelectIndex). The
+ * rows' offset is the one the touch began with, for the whole of it.
+ */
+static s32 sBagTouchShift, sBagTouchSkip;
+static s16 sBagTapIndex = -1;
+static int sBagDownX, sBagDownY;
+
 static bool8 BagListTouch(const ViewState *s, u8 phase, int x, int y, bool8 start)
 {
-    s32 row256 = (y - BAG_LIST_TOP) * 256 / BAG_ROW_H;
+    const struct CtrBagView *v = &s->bv;
+    s32 row256 = (y - CTR_BOTTOM_EXTRA / 2 - BAG_LIST_TOP) * 256 / BAG_ROW_H;
     s16 gx, gy;
 
-    if (start && (!BagListShown(&s->bv) || x < BAG_LIST_X || x >= BAG_LIST_X + BAG_LIST_W || y < AREA_Y
-                  || y >= AREA_Y + BAG_LIST_H || row256 < 0 || row256 >= s->bv.numRows * 256))
-        return FALSE;
-    CtrBag_ListPoint(row256, &gx, &gy);
+    y -= CTR_BOTTOM_EXTRA / 2;      /* the view's own rows (sOY) */
+
+    if (start)
+    {
+        s32 game256;
+
+        if (!BagListShown(v) || x < BAG_LIST_X || x >= BAG_LIST_X + BAG_LIST_W || y < GV_Y
+            || y >= GV_Y + BAG_LIST_H || row256 < 0 || row256 >= v->numRows * 256)
+            return FALSE;
+        /* The game's rows start this many rows into those shown. */
+        sBagTouchSkip = ((s32)v->listScroll - (s32)v->scroll) * 256;
+        game256 = row256 - sBagTouchSkip;
+        sBagTouchShift = 0;
+        sBagTapIndex = -1;
+        if (game256 < 0)
+            sBagTouchShift = (-game256 + 255) / 256 * 256;
+        else if (game256 >= 8 * 256)
+            sBagTouchShift = -((game256 - 8 * 256) / 256 + 1) * 256;
+        if (sBagTouchShift != 0 && v->state == CTR_BAG_VIEW_LIST)
+            sBagTapIndex = (s16)(v->scroll + row256 / 256);
+        sBagDownX = x;
+        sBagDownY = y;
+    }
+    if (phase == BAG_TOUCH_UP && sBagTapIndex >= 0)
+    {
+        s16 index = sBagTapIndex;
+
+        sBagTapIndex = -1;
+        if (x - sBagDownX <= 8 && sBagDownX - x <= 8 && y - sBagDownY <= 8 && sBagDownY - y <= 8)
+        {
+            CtrBag_Touch(BAG_TOUCH_CANCEL, 0, 0);
+            CtrBag_SelectIndex((u16)index);
+            return TRUE;
+        }
+    }
+    CtrBag_ListPoint(row256 - sBagTouchSkip + sBagTouchShift, &gx, &gy);
     CtrBag_Touch(phase, gx, gy);
     return TRUE;
 }
@@ -1552,6 +1643,7 @@ static void MixPut(int x, int y, Rgb c, int alpha)
     int r, g, b;
 
     x += sOX;
+    y += sOY;
     if (x < sClipX0 || x >= sClipX1 || y < sClipY0 || y >= sClipY1)
         return;
     v = sDst[x * H + (H - 1 - y)];
@@ -1786,6 +1878,8 @@ static bool8 DexTouch(const ViewState *s, u8 phase, int x, int y, bool8 start)
     static u8 sKind;
     static int sY0, sY, sMiddle;
     const struct CtrDexView *v = &s->dx;
+
+    y -= CTR_BOTTOM_EXTRA / 2;      /* the view's own rows (sOY) */
 
     if (start)
     {

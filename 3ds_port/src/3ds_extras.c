@@ -47,6 +47,8 @@ static const char *const sShinyOdds[] = {"1/8192", "1/4096", "1/1024", "1/256", 
  * only with the voxel overworld on: a build without it has no cells for
  * them, and with it off they are greyed (CtrExtras_NeedsVoxel). */
 static const char *const sVoxelStereo[] = {CTR_TEXT("AUTO", "AUTO", "AUTO", "AUTO", "AUTO", "AUTO", "オート"), CTR_TEXT("ON", "SÍ", "OUI", "SÌ", "SIM", "AN", "オン"), CTR_TEXT("OFF", "NO", "NON", "NO", "NENHUM", "AUS", "オフ")};
+/* 3D SPRITES: how many sprite pixels deep the walkers are, or flat. */
+static const char *const sSpriteDepths[] = {CTR_TEXT("OFF", "NO", "NON", "NO", "NÃO", "AUS", "オフ"), "1", "2", "3"};
 static const char *const sVoxelDepths[] = {"25%", "50%", "75%", "100%", "125%", "150%", "200%"};
 /*
  * Pokedex (CHEATS): the Hoenn Pokedex complete, the National Pokedex
@@ -210,6 +212,8 @@ const CtrExtra gCtrExtras[] =
 {
     /* Features add their lines here. */
     {CTR_EXTRAS_SCREEN(CTR_EXTRAS_OPTIONS, 1), CTR_TEXT("3D WORLD", "MUNDO 3D", "MONDE 3D", "MONDO 3D", "MUNDO 3D", "3D-WELT", "3D ワールド"), "voxel_stereo", 3, 0, sVoxelStereo, NULL, NULL, NULL},
+    /* The walkers a pixel deep in the 3D world (voxel_entities.c, EmitDepth). */
+    {CTR_EXTRAS_SCREEN(CTR_EXTRAS_OPTIONS, 1), CTR_TEXT("3D SPRITES", "SPRITES 3D", "SPRITES 3D", "SPRITE 3D", "SPRITES 3D", "3D-SPRITES", "3D スプライト"), "voxel_sprite_depth", 4, 0, sSpriteDepths, NULL, NULL, NULL},
     {CTR_EXTRAS_SCREEN(CTR_EXTRAS_OPTIONS, 1), CTR_TEXT("3D DEPTH", "PROFUNDIDAD 3D", "PROFONDEUR 3D", "PROFOND. 3D", "PROFUNDIDADE 3D", "3D-TIEFE", "3D おくゆき"), "voxel_depth", 7, 3, sVoxelDepths, NULL, NULL, NULL},
     {CTR_EXTRAS_ENHANCEMENTS, CTR_TEXT("SPEED", "VELOC. JUEGO", "VITESSE", "VELOCITÀ", "VELOCIDADE", "TEMPO", "スピード"), "speed", 0, 0, NULL, NULL, SpeedStep, SpeedText},
     /* The game and the music keep real time on a slow frame; the sound

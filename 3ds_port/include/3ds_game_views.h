@@ -138,7 +138,13 @@ enum
     CTR_BAG_VIEW_MESSAGE,   /* a message (msg) waiting to go on */
 };
 
+/* The list's rows on the bottom screen: the game's eight, or ten on the Ayn
+ * Thor's taller one (the game's eight among them, CtrBag_ViewRows). */
+#ifdef PLATFORM_ANDROID
+#define CTR_BAG_ROWS 10
+#else
 #define CTR_BAG_ROWS 8
+#endif
 #define CTR_BAG_NAME 24
 #define CTR_BAG_ENTRIES 6
 
@@ -154,6 +160,7 @@ struct CtrBagView
     u8 numRows, cursor;     /* the rows shown and the cursor's among them */
     s8 swapRow;             /* the row of the item being moved, -1 */
     u16 scroll, total;      /* the first row shown, the rows there are */
+    u16 listScroll;         /* the game's own list's first row */
     u16 items[CTR_BAG_ROWS];   /* ITEM_NONE: CLOSE BAG */
     u16 counts[CTR_BAG_ROWS];
     u8 flags[CTR_BAG_ROWS];
@@ -175,6 +182,10 @@ bool8 CtrBag_InWindow(void);
 /* A point of the item list, its rows counted in 1/256s from its top, in
  * pixels of the bag's picture (for CtrBag_Touch). */
 void CtrBag_ListPoint(s32 row256, s16 *x, s16 *y);
+/* A row shown past the game's own list (CTR_BAG_ROWS more than its eight)
+ * tapped: the list scrolls to the pocket's index-th item and the cursor
+ * goes on it, on the bag's next frame. */
+void CtrBag_SelectIndex(u16 index);
 /* The pocket name's arrows: the previous (-1) or next (1) pocket. */
 void CtrBag_TapPocket(s8 dir);
 /* How many: delta more (fewer), as the d-pad would count. */

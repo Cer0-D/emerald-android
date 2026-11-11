@@ -543,11 +543,11 @@ romfs/voxel/relief.bin: scripts/gen_voxel_relief.py scripts/voxel_cells.py scrip
 
 romfs/bottom/battle.bin: scripts/gen_battle_art.py
 	@mkdir -p $(@D)
-	"$(PYTHON)" scripts/gen_battle_art.py --output $@
+	"$(PYTHON)" scripts/gen_battle_art.py --output $@ $(BOTTOM_ART_FLAGS)
 
 romfs/bottom/menu.bin: scripts/gen_menu_art.py scripts/gen_battle_art.py
 	@mkdir -p $(@D)
-	"$(PYTHON)" scripts/gen_menu_art.py --output $@
+	"$(PYTHON)" scripts/gen_menu_art.py --output $@ $(BOTTOM_ART_FLAGS)
 
 romfs/battle/hud.bin: scripts/gen_battle_hud.py
 	@mkdir -p $(@D)

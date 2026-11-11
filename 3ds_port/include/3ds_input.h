@@ -29,7 +29,7 @@ typedef struct {
     uint16_t lastDown, lastUp, circleDirection;
     uint32_t presses[12];
     bool touchActive, touchDown, touchUp;
-    uint16_t touchX, touchY; /* bottom pixels: 0..319, 0..239 */
+    uint16_t touchX, touchY; /* bottom pixels: 0..319, 0..CTR_BOTTOM_HEIGHT - 1 */
     float touchNormX, touchNormY; /* 0..1, zero when not touching */
     int16_t circleX, circleY;
 } CtrInput;

@@ -31,6 +31,17 @@ paths = [
     "Emerald3DS-v*-Windows/payload/*/emerald3ds.recipe",
     "payload/emerald3ds.recipe",
     "payload/*/emerald3ds.recipe",
+    # The Android APK (android_port/tools/release.sh). Its native library is
+    # the port's code: the game's read-only data is reserved NOLOAD and comes
+    # from the data pack (android_port/emerald_android.ld), as on the 3DS.
+    "lib/armeabi-v7a/libemerald.so",
+    # The recipe the app builds the data pack from, unpacked from the release's
+    # .recipe (android_port/tools/export_recipe.py): ROM offsets and the
+    # literal pool, the precompiled voxel programs included.
+    "assets/builder/recipe.json",
+    "assets/builder/literals.bin",
+    # The bottom screen's battle art: the port's own (gen_battle_art.py).
+    "assets/engine/bottom/battle.bin",
 ]
 
 [media]

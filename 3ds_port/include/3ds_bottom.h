@@ -15,7 +15,14 @@
  * VRAM: on an Old 3DS the compositor and the voxel overworld need all of it.
  */
 #define CTR_BOTTOM_WIDTH 320
+#ifdef PLATFORM_ANDROID
+/* The Ayn Thor's bottom display is 1240x1080: 320x280 covers it. */
+#define CTR_BOTTOM_HEIGHT 280
+#else
 #define CTR_BOTTOM_HEIGHT 240
+#endif
+/* Rows over the 3DS's 240: the views laid out for 240 sit centred in them. */
+#define CTR_BOTTOM_EXTRA (CTR_BOTTOM_HEIGHT - 240)
 
 /* Native side (libctru): copy columns [x0, x1) of the canvas to the screen. */
 void CtrBottom_Blit(const uint16_t *canvas, int x0, int x1);

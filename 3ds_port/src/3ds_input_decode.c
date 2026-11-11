@@ -1,4 +1,5 @@
 #include "3ds_input.h"
+#include "3ds_bottom.h"
 
 static uint16_t CircleDirection(int x, int y, uint16_t previous)
 {
@@ -39,8 +40,8 @@ void CtrInput_Update(CtrInput *state, const CtrInputSample *sample)
     state->touchDown = sample->touchActive && !state->touchActive;
     state->touchUp = state->touchActive && !sample->touchActive;
     state->touchActive = sample->touchActive;
-    state->touchX = state->touchActive ? (sample->touchX < 320 ? sample->touchX : 319) : 0;
-    state->touchY = state->touchActive ? (sample->touchY < 240 ? sample->touchY : 239) : 0;
-    state->touchNormX = state->touchX / 319.0f;
-    state->touchNormY = state->touchY / 239.0f;
+    state->touchX = state->touchActive ? (sample->touchX < CTR_BOTTOM_WIDTH ? sample->touchX : CTR_BOTTOM_WIDTH - 1) : 0;
+    state->touchY = state->touchActive ? (sample->touchY < CTR_BOTTOM_HEIGHT ? sample->touchY : CTR_BOTTOM_HEIGHT - 1) : 0;
+    state->touchNormX = state->touchX / (CTR_BOTTOM_WIDTH - 1.0f);
+    state->touchNormY = state->touchY / (CTR_BOTTOM_HEIGHT - 1.0f);
 }

@@ -7,6 +7,10 @@
  *   y 38..202  the content area, CX 4 CW 312
  *   y 204..240 the dock: one button a section, NUZLOCKE last when it is on
  *
+ * A taller canvas (CTR_BOTTOM_EXTRA rows more, the Thor's) keeps the header
+ * at the top and the dock at the foot; the views between them, laid out in
+ * these 240 rows, are centred (sOY), the region map drawn larger.
+ *
  * Every piece is a plate (3ds_bottom_plate.inc); a chosen or pressed one is
  * emerald. The game's own screens (the party menu, the bag, the Pokédex,
  * the PokéNav, the boxes) are its 240x160 picture 1:1 in a window at
@@ -32,8 +36,8 @@
 #define TITLE_WIDE_W (CLOCK_X - 2 - TITLE_X)
 
 /* The dock. */
-#define DOCK_Y 204
-#define DOCK_TOP 207
+#define DOCK_Y (204 + CTR_BOTTOM_EXTRA)
+#define DOCK_TOP (207 + CTR_BOTTOM_EXTRA)
 #define DOCK_H 30
 #define DOCK_GAP 2
 
@@ -42,6 +46,16 @@
 #define AREA_Y 38
 #define AREA_W 312
 #define AREA_H 164
+/*
+ * A view's whole room. Views are drawn moved down by half a taller canvas's
+ * extra rows (sOY, CTR_BOTTOM_EXTRA); those that use the extra rows (the
+ * party menu, the bag, the options) reach that far above AREA_Y and as far
+ * below its foot: all the space between the header and the dock. On the 3DS
+ * this is the content area itself.
+ */
+#define GV_Y (AREA_Y - CTR_BOTTOM_EXTRA / 2)
+#define GV_H (AREA_H + CTR_BOTTOM_EXTRA)
+#define GV_BOTTOM (GV_Y + GV_H)
 
 /* The map's window, the map 1:1 inside its 2px frame. */
 #define MAP_WIN_X 34
@@ -101,6 +115,8 @@ static void ClipPush(int saved[4], int x0, int y0, int x1, int y1)
     saved[3] = sClipY1;
     x0 += sOX;
     x1 += sOX;
+    y0 += sOY;
+    y1 += sOY;
     if (sClipX0 < x0) sClipX0 = x0;
     if (sClipY0 < y0) sClipY0 = y0;
     if (sClipX1 > x1) sClipX1 = x1;
@@ -143,9 +159,10 @@ static void DrawChamferFrame(int x, int y, int w, int h, int c, int border)
             Rgb under;
             Px p;
 
-            if (hole >= 1.0f || px + sOX < sClipX0 || px + sOX >= sClipX1 || py < sClipY0 || py >= sClipY1)
+            if (hole >= 1.0f || px + sOX < sClipX0 || px + sOX >= sClipX1 || py + sOY < sClipY0
+                || py + sOY >= sClipY1)
                 continue;
-            under = RgbOf(sDst[(px + sOX) * H + (H - 1 - py)]);
+            under = RgbOf(sDst[(px + sOX) * H + (H - 1 - (py + sOY))]);
             p = (Px){1.0f, 0, 0, 0};
             Paint(&p, shadow, 0.55f * Blurred(ChamferDist(u, v, x, y + 3.5f, w, h, c), 1.2f));
             Paint(&p, ink, Cover(ChamferDist(u, v, x, y, w, h, c)));

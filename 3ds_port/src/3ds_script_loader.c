@@ -142,6 +142,22 @@ static bool LoadBundle(const char *what, const char *payloadPath, const char *re
     /* Everything the bundle knows about the executable was recorded at link
      * time; one symbol is enough to learn where the image actually landed. */
     delta = (u32)(uintptr_t)AgbMain - header.referenceAddress;
+#ifdef PLATFORM_ANDROID
+    /* A shared library moves as a whole: AgbMain lands exactly the load bias
+     * from where the link put it. Anything else is data from another link,
+     * which would relocate every pointer to the wrong place. */
+    {
+        extern const char __ehdr_start[];
+        if (delta != (u32)(uintptr_t)__ehdr_start)
+        {
+            PORT_LOG("[ERROR] %s bundle was made for another build of the library "
+                     "(AgbMain at %08lX, here %08lX)\n", what,
+                     (unsigned long)header.referenceAddress,
+                     (unsigned long)((uintptr_t)AgbMain - (uintptr_t)__ehdr_start));
+            goto fail;
+        }
+    }
+#endif
 
     sites = (const u32 *)(relocs + sizeof(header));
     for (i = 0; i < header.internalCount; i++)
@@ -185,7 +201,14 @@ bool CtrGameData_Init(void)
     if (tried)
         return ready;
     tried = true;
-    ready = LoadBundle("game data", GAMEDATA_BUNDLE_PATH, GAMEDATA_RELOC_PATH, GAMEDATA_BUNDLE_MAGIC,
+    /* A build that keeps the game's read-only data in place reserves no
+     * region (the Android development link): nothing to load. */
+    if (__ctr_gamedata_end == __ctr_gamedata)
+    {
+        PORT_LOG("[FS] game data: linked in place, no bundle\n");
+        return ready = true;
+    }
+    ready = LoadBundle("game data",GAMEDATA_BUNDLE_PATH, GAMEDATA_RELOC_PATH, GAMEDATA_BUNDLE_MAGIC,
                        __ctr_gamedata, __ctr_gamedata_end, &sGameDataBytes);
     return ready;
 }

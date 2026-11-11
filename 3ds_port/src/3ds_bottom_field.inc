@@ -18,14 +18,38 @@
  */
 #define MAP_PIC_W 248
 #define MAP_PIC_H 160
+/*
+ * The map section's own window. On a taller canvas (CTR_BOTTOM_EXTRA, the
+ * Thor's bottom display) the picture is drawn RMAP_NUM/RMAP_DEN its size, as
+ * large as the content area between the header and the dock; on the 3DS it
+ * is MAP_WIN_*, 1:1. MAP_PIC_W/H stay the picture's own size in map pixels;
+ * RMAP_PIC_W/H are the screen's.
+ */
+#if CTR_BOTTOM_EXTRA
+#define RMAP_NUM 5
+#define RMAP_DEN 4
+#define RMAP_WIN_X 3
+#define RMAP_WIN_Y AREA_Y
+#else
+#define RMAP_NUM 1
+#define RMAP_DEN 1
+#define RMAP_WIN_X MAP_WIN_X
+#define RMAP_WIN_Y MAP_WIN_Y
+#endif
+#define RMAP_PIC_W (MAP_PIC_W * RMAP_NUM / RMAP_DEN)
+#define RMAP_PIC_H (MAP_PIC_H * RMAP_NUM / RMAP_DEN)
+#define RMAP_WIN_W (RMAP_PIC_W + 4)
+#define RMAP_WIN_H (RMAP_PIC_H + 4)
+#define RMAP_ORIGIN_X (RMAP_WIN_X + 2)
+#define RMAP_ORIGIN_Y (RMAP_WIN_Y + 2)
 /* The zoom button, inside the picture's bottom right corner (the sea). */
 #define ZOOM_W 24
 #define ZOOM_H 24
-#define ZOOM_X (MAP_ORIGIN_X + MAP_PIC_W - 4 - ZOOM_W)
-#define ZOOM_Y (MAP_ORIGIN_Y + MAP_PIC_H - 4 - ZOOM_H)
+#define ZOOM_X (RMAP_ORIGIN_X + RMAP_PIC_W - 4 - ZOOM_W)
+#define ZOOM_Y (RMAP_ORIGIN_Y + RMAP_PIC_H - 4 - ZOOM_H)
 /* Zoomed in, the picked place's panel at the picture's top, on the side
  * away from the place: a town's layout, or a route's landmarks. */
-#define PANEL_Y (MAP_ORIGIN_Y + 4)
+#define PANEL_Y (RMAP_ORIGIN_Y + 4)
 #define PANEL_CITY_W 104
 #define PANEL_MARKS_W 132
 #define PANEL_TITLE_H 18
@@ -70,7 +94,7 @@ static void DrawMapTile8(u8 tile, int x, int y)
 /* Draws only inside the map's picture, and inside the redraw's own clip. */
 static void ClipToMapWindow(int saved[4])
 {
-    ClipPush(saved, MAP_ORIGIN_X, MAP_ORIGIN_Y, MAP_ORIGIN_X + MAP_PIC_W, MAP_ORIGIN_Y + MAP_PIC_H);
+    ClipPush(saved, RMAP_ORIGIN_X, RMAP_ORIGIN_Y, RMAP_ORIGIN_X + RMAP_PIC_W, RMAP_ORIGIN_Y + RMAP_PIC_H);
 }
 
 static void RestoreClip(const int saved[4])
@@ -83,13 +107,13 @@ static void MapToScreen(const ViewState *s, int mx, int my, int *sx, int *sy)
 {
     if (s->mapZoom)
     {
-        *sx = MAP_ORIGIN_X + (mx - s->mapViewX) * 2;
-        *sy = MAP_ORIGIN_Y + (my - s->mapViewY) * 2;
+        *sx = RMAP_ORIGIN_X + (mx - s->mapViewX) * 2 * RMAP_NUM / RMAP_DEN;
+        *sy = RMAP_ORIGIN_Y + (my - s->mapViewY) * 2 * RMAP_NUM / RMAP_DEN;
     }
     else
     {
-        *sx = MAP_ORIGIN_X + mx;
-        *sy = MAP_ORIGIN_Y + my;
+        *sx = RMAP_ORIGIN_X + mx * RMAP_NUM / RMAP_DEN;
+        *sy = RMAP_ORIGIN_Y + my * RMAP_NUM / RMAP_DEN;
     }
 }
 
@@ -107,7 +131,7 @@ static s16 sMapCacheView[3] = {-1, 0, 0};
  * or zoomed in from (vx, vy). Drawn whole whatever redraw asks for it. */
 static void BuildMapCache(bool8 zoom, int vx, int vy)
 {
-    int clip[4] = {sClipX0, sClipY0, sClipX1, sClipY1}, ox = sOX, saved[4];
+    int clip[4] = {sClipX0, sClipY0, sClipX1, sClipY1}, ox = sOX, oy = sOY, saved[4];
     u16 *dst = sDst;
 
     if (!sCache[CACHE_MAP])
@@ -116,25 +140,29 @@ static void BuildMapCache(bool8 zoom, int vx, int vy)
     sClipX1 = W;
     sClipY1 = H;
     sOX = 0;
+    sOY = 0;
     memcpy(sCache[CACHE_MAP], sCache[CACHE_MENU], sizeof(sCanvas));
     sDst = sCache[CACHE_MAP];
-    DrawChamferFrame(MAP_WIN_X, MAP_WIN_Y, MAP_WIN_W, MAP_WIN_H, 4, 2);
+    DrawChamferFrame(RMAP_WIN_X, RMAP_WIN_Y, RMAP_WIN_W, RMAP_WIN_H, 4, 2);
     ClipToMapWindow(saved);
+    /* Each screen pixel the map pixel under it: twice the scale zoomed in. */
     if (zoom)
     {
-        for (int y = 0; y < MAP_PIC_H; y += 2)
-            for (int x = 0; x < MAP_PIC_W; x += 2)
-                FillRect(MAP_ORIGIN_X + x, MAP_ORIGIN_Y + y, 2, 2, MapPixel(vx + x / 2, vy + y / 2));
+        for (int y = 0; y < RMAP_PIC_H; ++y)
+            for (int x = 0; x < RMAP_PIC_W; ++x)
+                Put(RMAP_ORIGIN_X + x, RMAP_ORIGIN_Y + y,
+                    MapPixel(vx + x * RMAP_DEN / (2 * RMAP_NUM), vy + y * RMAP_DEN / (2 * RMAP_NUM)));
     }
     else
     {
-        for (int y = 0; y < MAP_PIC_H; ++y)
-            for (int x = 0; x < MAP_PIC_W; ++x)
-                Put(MAP_ORIGIN_X + x, MAP_ORIGIN_Y + y, MapPixel(x, y));
+        for (int y = 0; y < RMAP_PIC_H; ++y)
+            for (int x = 0; x < RMAP_PIC_W; ++x)
+                Put(RMAP_ORIGIN_X + x, RMAP_ORIGIN_Y + y, MapPixel(x * RMAP_DEN / RMAP_NUM, y * RMAP_DEN / RMAP_NUM));
     }
     RestoreClip(saved);
     sDst = dst;
     sOX = ox;
+    sOY = oy;
     sClipX0 = clip[0];
     sClipY0 = clip[1];
     sClipX1 = clip[2];
@@ -199,10 +227,10 @@ static void MarkRect(const ViewState *s, u8 cx, u8 cy, int *x0, int *y0, int *x1
     *y0 = y - 8;
     *x1 = *x0 + 16;
     *y1 = *y0 + 16;
-    if (*x0 < MAP_ORIGIN_X) *x0 = MAP_ORIGIN_X;
-    if (*y0 < MAP_ORIGIN_Y) *y0 = MAP_ORIGIN_Y;
-    if (*x1 > MAP_ORIGIN_X + MAP_PIC_W) *x1 = MAP_ORIGIN_X + MAP_PIC_W;
-    if (*y1 > MAP_ORIGIN_Y + MAP_PIC_H) *y1 = MAP_ORIGIN_Y + MAP_PIC_H;
+    if (*x0 < RMAP_ORIGIN_X) *x0 = RMAP_ORIGIN_X;
+    if (*y0 < RMAP_ORIGIN_Y) *y0 = RMAP_ORIGIN_Y;
+    if (*x1 > RMAP_ORIGIN_X + RMAP_PIC_W) *x1 = RMAP_ORIGIN_X + RMAP_PIC_W;
+    if (*y1 > RMAP_ORIGIN_Y + RMAP_PIC_H) *y1 = RMAP_ORIGIN_Y + RMAP_PIC_H;
     if (*x1 < *x0) *x1 = *x0;
     if (*y1 < *y0) *y1 = *y0;
 }
@@ -241,6 +269,9 @@ static void DrawFlyIcon(const ViewState *s, int mx, int my, int wt, int ht, int 
     int x, y;
 
     MapToScreen(s, mx, my, &x, &y);
+    /* A larger map: the icon (1:1, or doubled zoomed in) centred on its cells. */
+    x += (wt * 8 * (s->mapZoom ? 2 : 1) * (RMAP_NUM - RMAP_DEN) / RMAP_DEN) / 2;
+    y += (ht * 8 * (s->mapZoom ? 2 : 1) * (RMAP_NUM - RMAP_DEN) / RMAP_DEN) / 2;
     if (s->mapZoom)
         DrawSpriteDouble(sFlyIcons + frame * 32, wt, ht, x, y, sFlyIconPal.c);
     else
@@ -315,7 +346,7 @@ static bool8 MapPanelRight(int cx)
 static void MapPanelRect(const ViewState *s, int *x, int *w, int *h)
 {
     *w = MapPanelWidth(s);
-    *x = MapPanelRight(s->pickX) ? MAP_ORIGIN_X + MAP_PIC_W - 4 - *w : MAP_ORIGIN_X + 4;
+    *x = MapPanelRight(s->pickX) ? RMAP_ORIGIN_X + RMAP_PIC_W - 4 - *w : RMAP_ORIGIN_X + 4;
     *h = MapCityPicture(s->pickMapsec, s->pickType, s->pickPos) ? PANEL_TITLE_H + 8 + 80 + 6
                                                                  : PANEL_TITLE_H + 8 + s->landmarks * PANEL_ROW_H + 4;
 }
@@ -408,9 +439,9 @@ static bool8 MapOverlayMeets(const ViewState *s, int x0, int y0, int x1, int y1)
 /* The view zoomed in round a cell: in the middle of what the panel leaves. */
 static void MapZoomTo(int cx, int cy, int panelW)
 {
-    int free = MAP_PIC_W - (panelW ? panelW + 8 : 0);
+    int free = RMAP_PIC_W - (panelW ? panelW + 8 : 0);
     int left = panelW && !MapPanelRight(cx) ? panelW + 8 : 0;
-    int vx = cx * 8 + 4 - (left + free / 2) / 2, vy = cy * 8 + 4 - MAP_PIC_H / 4;
+    int vx = cx * 8 + 4 - (left + free / 2) * RMAP_DEN / (2 * RMAP_NUM), vy = cy * 8 + 4 - MAP_PIC_H / 4;
 
     sMapViewX = vx < 0 ? 0 : vx > MAP_PIC_W / 2 ? MAP_PIC_W / 2 : vx;
     sMapViewY = vy < 0 ? 0 : vy > MAP_PIC_H / 2 ? MAP_PIC_H / 2 : vy;
@@ -442,8 +473,10 @@ static int PickPanelWidth(u8 mapsec, u8 pos)
  * comes round it. */
 static void PickMapCell(int x, int y)
 {
-    int mx = sMapZoom ? sMapViewX + (x - MAP_ORIGIN_X) / 2 : x - MAP_ORIGIN_X;
-    int my = sMapZoom ? sMapViewY + (y - MAP_ORIGIN_Y) / 2 : y - MAP_ORIGIN_Y;
+    int mx = sMapZoom ? sMapViewX + (x - RMAP_ORIGIN_X) * RMAP_DEN / (2 * RMAP_NUM)
+                      : (x - RMAP_ORIGIN_X) * RMAP_DEN / RMAP_NUM;
+    int my = sMapZoom ? sMapViewY + (y - RMAP_ORIGIN_Y) * RMAP_DEN / (2 * RMAP_NUM)
+                      : (y - RMAP_ORIGIN_Y) * RMAP_DEN / RMAP_NUM;
     int cx = mx >> 3, cy = my >> 3;
     u16 mapsec = mx >= 0 && my >= 0 ? GetRegionMapSecIdAt(cx, cy) : MAPSEC_NONE;
 
@@ -568,7 +601,7 @@ static void DrawRegionMap(const ViewState *s)
         if (s->mapFly)
             DrawFlyIcons(s);
         DrawMapMarks(s);
-        AddHit(MAP_ORIGIN_X, MAP_ORIGIN_Y, MAP_PIC_W, MAP_PIC_H, HIT_MAP);
+        AddHit(RMAP_ORIGIN_X, RMAP_ORIGIN_Y, RMAP_PIC_W, RMAP_PIC_H, HIT_MAP);
         DrawMapPanel(s);
         DrawZoomButton(s);
     }

@@ -43,3 +43,6 @@ __pycache__/
 session-*.md
 .public-denylist
 .DS_Store
+
+# Android port outputs (APK, captures)
+android_port/build/

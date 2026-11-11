@@ -56,7 +56,12 @@ static const OptRowDef sRowsSystem[] = {
 };
 static const OptRowDef sRows3d[] = {
     GAME_ROW(OPT_VOXEL, "VOXEL 3D"),
+#ifdef PLATFORM_ANDROID
+    /* No stereoscopy on the Thor: its row is the walkers' depth's. */
+    EXTRA_ROW("voxel_sprite_depth"),
+#else
     EXTRA_ROW("voxel_stereo"),
+#endif
     EXTRA_ROW("voxel_depth"),
     GAME_ROW(OPT_VOXEL_PITCH, CTR_TEXT("3D ANGLE", "ÁNGULO 3D", "ANGLE 3D", "ANGOLO 3D", "ÂNGULO 3D", "3D-WINKEL", "3D アングル")),
     GAME_ROW(OPT_VOXEL_ZOOM, CTR_TEXT("3D ZOOM", "ZOOM 3D", "ZOOM 3D", "ZOOM 3D", "ZOOM 3D", "3D-ZOOM", "3D ズーム")),
@@ -448,11 +453,15 @@ static void SetRow(const OptRow *r, bool8 on)
 /* Drawing                                                                  */
 /* ------------------------------------------------------------------------ */
 
-#define OPT_TAB_H 18
-#define OPT_GROUP_Y (AREA_Y + 20)
-#define OPT_GROUP_H 15
-#define OPT_PANEL_Y (AREA_Y + 38)
-#define OPT_PANEL_H (AREA_Y + AREA_H - OPT_PANEL_Y)
+/* Over the whole height (GV_*): on the Thor's taller canvas the tabs a little
+ * taller and the rows much more so - easier to hit - in the normal font
+ * (OptFont) where the small one serves the 3DS. */
+#define OPT_TAB_H (18 + CTR_BOTTOM_EXTRA / 10)
+#define OPT_GROUP_Y (GV_Y + OPT_TAB_H + 2)
+#define OPT_GROUP_H (15 + CTR_BOTTOM_EXTRA / 10)
+#define OPT_PANEL_Y (OPT_GROUP_Y + OPT_GROUP_H + 3)
+#define OPT_PANEL_H (GV_BOTTOM - OPT_PANEL_Y)
+#define OPT_CTRL_FONT (CTR_BOTTOM_EXTRA ? &sNormal : &sSmall)
 #define OPT_ROW_H ((OPT_PANEL_H - 4) / OPT_ROWS_MAX)
 #define OPT_ROW_Y(i) (OPT_PANEL_Y + 2 + (i) * OPT_ROW_H)
 #define OPT_RIGHT (AREA_X + AREA_W - 8)
@@ -468,10 +477,19 @@ static void DrawArrow(int x, int y, int dir, u16 colour)
         FillRect(dir < 0 ? x + i : x + 3 - i, y + 3 - i, 1, 2 * i + 1, colour);
 }
 
+/* A row label's font: the normal one on a taller canvas while the label fits
+ * in avail (in its narrow cut, as TextIn draws it), else the small one. */
+static const Font *OptFont(const u8 *str, int avail)
+{
+    if (!CTR_BOTTOM_EXTRA || StrWidth(FitFont(&sNormal, str, avail), str) > avail)
+        return &sSmall;
+    return &sNormal;
+}
+
 /* The width of the OFF | ON halves: the wider word and some room. */
 static int ToggleHalf(void)
 {
-    int a = StrWidth(&sSmall, Ascii(gCtrExtrasOffOn[0])), b = StrWidth(&sSmall, Ascii(gCtrExtrasOffOn[1]));
+    int a = StrWidth(OPT_CTRL_FONT, Ascii(gCtrExtrasOffOn[0])), b = StrWidth(OPT_CTRL_FONT, Ascii(gCtrExtrasOffOn[1]));
 
     return (a > b ? a : b) + 12;
 }
@@ -482,8 +500,8 @@ static int RowControlLeft(const OptRow *r, const u8 options[OPTION_ROWS])
     switch (RowKind(r))
     {
     case KIND_TOGGLE: return OPT_RIGHT - 2 * ToggleHalf() - 2;
-    case KIND_VALUE: return OPT_RIGHT - (StrWidth(&sSmall, RowValueText(r, options)) + 22);
-    case KIND_ACTION: return OPT_RIGHT - (StrWidth(&sSmall, ActionLabel2(r)) + 14);
+    case KIND_VALUE: return OPT_RIGHT - (StrWidth(OPT_CTRL_FONT, RowValueText(r, options)) + 22);
+    case KIND_ACTION: return OPT_RIGHT - (StrWidth(OPT_CTRL_FONT, ActionLabel2(r)) + 14);
     }
     return OPT_RIGHT;
 }
@@ -522,11 +540,11 @@ static void DrawOptionTabs(const ViewState *s)
     for (int i = 0; i < n; x += widths[i] + 2, ++i)
     {
         bool8 live = s->optPage == cats[i], pressed = s->pressed == HIT_CAT + cats[i];
-        int oy = PlateEx(x, AREA_Y, widths[i], OPT_TAB_H, live || pressed ? sEmerald : sLight,
+        int oy = PlateEx(x, GV_Y, widths[i], OPT_TAB_H, live || pressed ? sEmerald : sLight,
                          pressed ? PLATE_STATE_PRESSED : PLATE_STATE_NORMAL, 0, 30, 3, 0);
 
         TextIn(names[i], x, oy, widths[i], OPT_TAB_H, &sSmall, 'c', live || pressed ? STYLE_WHITE : STYLE_INK, 3);
-        AddHit(x, AREA_Y, widths[i], OPT_TAB_H + 1, HIT_CAT + cats[i]);
+        AddHit(x, GV_Y, widths[i], OPT_TAB_H + 1, HIT_CAT + cats[i]);
     }
 }
 
@@ -593,10 +611,10 @@ static void DrawOptionRow(const ViewState *s, int i, const OptRow *r, const u8 o
             {
                 int oy = PlateEx(bx, ry + 2, hw, rh - 4, live ? sEmerald : sOffGrey, PLATE_STATE_NORMAL, 0, 30, 3, 0);
 
-                StyledCentre(&sSmall, word, bx + hw / 2, TextY(oy, rh - 4, &sSmall), STYLE_WHITE);
+                StyledCentre(OPT_CTRL_FONT, word, bx + hw / 2, TextY(oy, rh - 4, OPT_CTRL_FONT), STYLE_WHITE);
             }
             else
-                StyledCentre(&sSmall, word, bx + hw / 2, TextY(ry + 2, rh - 4, &sSmall), STYLE_GRAY);
+                StyledCentre(OPT_CTRL_FONT, word, bx + hw / 2, TextY(ry + 2, rh - 4, OPT_CTRL_FONT), STYLE_GRAY);
         }
         if (live)
         {
@@ -610,7 +628,7 @@ static void DrawOptionRow(const ViewState *s, int i, const OptRow *r, const u8 o
     {
         int wv = OPT_RIGHT - left;
 
-        StyledCentre(&sSmall, RowValueText(r, options), left + wv / 2, TextY(ry, rh, &sSmall),
+        StyledCentre(OPT_CTRL_FONT, RowValueText(r, options), left + wv / 2, TextY(ry, rh, OPT_CTRL_FONT),
                      live ? STYLE_GREEN : STYLE_GRAY);
         DrawArrow(left + 1, ry + rh / 2 - 3, -1, live ? green : sStyle[STYLE_GRAY].fg);
         DrawArrow(left + wv - 5, ry + rh / 2 - 3, 1, live ? green : sStyle[STYLE_GRAY].fg);
@@ -627,13 +645,13 @@ static void DrawOptionRow(const ViewState *s, int i, const OptRow *r, const u8 o
         int oy = PlateEx(left, ry + 2, wv, rh - 4, !live ? sOffGrey : pressed ? sEmerald : sSlate,
                          pressed ? PLATE_STATE_PRESSED : PLATE_STATE_NORMAL, 0, 30, 3, 0);
 
-        StyledCentre(&sSmall, ActionLabel2(r), left + wv / 2, TextY(oy, rh - 4, &sSmall), STYLE_WHITE);
+        StyledCentre(OPT_CTRL_FONT, ActionLabel2(r), left + wv / 2, TextY(oy, rh - 4, OPT_CTRL_FONT), STYLE_WHITE);
         if (live)
             AddHit(AREA_X, ry, AREA_W, rh, HIT_OPTION + i);
         break;
     }
     }
-    TextIn(RowLabel(r), AREA_X + 2, ry, left - AREA_X - 4, rh, &sSmall, 'l',
+    TextIn(RowLabel(r), AREA_X + 2, ry, left - AREA_X - 4, rh, OptFont(RowLabel(r), left - AREA_X - 16), 'l',
            kind == KIND_INFO || !live ? STYLE_GRAY : STYLE_INK, 6);
     if (s->optFocus == i)
         FocusBox(AREA_X + 4, ry + 1, AREA_W - 8, rh - 1);

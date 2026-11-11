@@ -24,6 +24,23 @@
 #include "3ds_data.h"
 #include "3ds_platform.h"
 
+/* The index holds the addresses the linker gave the stubs. The 3DSX runs at
+ * those addresses; a shared library (Android) is loaded somewhere else as a
+ * whole, so a pointer is first taken back by its load bias: the run-time
+ * address of the ELF header, which the link put at 0. */
+#ifdef PLATFORM_ANDROID
+extern const char __ehdr_start[];
+static inline u32 LinkAddr(const void *ptr)
+{
+    return (u32)((uintptr_t)ptr - (uintptr_t)__ehdr_start);
+}
+#else
+static inline u32 LinkAddr(const void *ptr)
+{
+    return (u32)(uintptr_t)ptr;
+}
+#endif
+
 u32 GetDecompressedDataSize(const u32 *ptr);
 
 #define ASSET_INDEX_PATH "romfs:/assets/asset_index.bin"
@@ -806,7 +823,7 @@ bool Port_IsAssetStub(const void *ptr)
 {
     u32 offset;
 
-    return LoadAssetMap() && FindAssetIndexForPointer((u32)ptr, &offset) >= 0;
+    return LoadAssetMap() && FindAssetIndexForPointer(LinkAddr(ptr), &offset) >= 0;
 }
 
 const char *Port_GetAssetPath(const void *ptr)
@@ -816,7 +833,7 @@ const char *Port_GetAssetPath(const void *ptr)
 
     if (!LoadAssetMap())
         return NULL;
-    idx = FindAssetIndexForPointer((u32)ptr, &offset);
+    idx = FindAssetIndexForPointer(LinkAddr(ptr), &offset);
     return idx >= 0 ? GetAssetPathByIndex(idx) : NULL;
 }
 
@@ -827,7 +844,7 @@ u32 Port_GetAssetSize(const void *ptr)
 
     if (!LoadAssetMap())
         return 0;
-    idx = FindAssetIndexForPointer((u32)ptr, &offset);
+    idx = FindAssetIndexForPointer(LinkAddr(ptr), &offset);
     if (idx < 0 || offset >= GetAssetEntry(idx)->size)
         return 0;
     return GetAssetEntry(idx)->size - offset;
@@ -839,7 +856,7 @@ u32 Port_GetAssetSizeExact(const void *base)
 
     if (base == NULL || !LoadAssetMap())
         return 0;
-    idx = FindAssetIndexByAddr((u32)base);
+    idx = FindAssetIndexByAddr(LinkAddr(base));
     return idx >= 0 ? GetAssetEntry(idx)->size : 0;
 }
 
@@ -850,7 +867,7 @@ u32 Port_GetAssetSizeSized(const void *ptr, u32 size)
 
     if (!LoadAssetMap())
         return 0;
-    idx = FindAssetIndexForSizedPointer((u32)ptr, size, &offset);
+    idx = FindAssetIndexForSizedPointer(LinkAddr(ptr), size, &offset);
     if (idx < 0 || offset >= GetAssetEntry(idx)->size)
         return 0;
     return GetAssetEntry(idx)->size - offset;
@@ -864,7 +881,7 @@ u32 Port_GetDecompressedAssetSize(const void *ptr)
 
     if (!LoadAssetMap())
         return 0;
-    idx = FindAssetIndexForPointer((u32)ptr, &offset);
+    idx = FindAssetIndexForPointer(LinkAddr(ptr), &offset);
     if (idx < 0)
         return GetDecompressedDataSize(ptr);
     data = GetPayload((u32)idx);
@@ -903,7 +920,7 @@ bool Port_LoadAssetPointerToBuffer(const void *ptr, void *dest, u32 maxSize)
 
     if (!LoadAssetMap())
         return false;
-    idx = FindAssetIndexForPointer((u32)ptr, &offset);
+    idx = FindAssetIndexForPointer(LinkAddr(ptr), &offset);
     if (idx < 0)
         return false;
     data = GetPayload((u32)idx);
@@ -924,7 +941,7 @@ bool Port_LoadAssetPointerToBufferSized(const void *ptr, void *dest, u32 size)
 
     if (size == 0 || !LoadAssetMap())
         return false;
-    idx = FindAssetIndexForSizedPointer((u32)ptr, size, &offset);
+    idx = FindAssetIndexForSizedPointer(LinkAddr(ptr), size, &offset);
     if (idx < 0)
         return false;
     data = GetPayload((u32)idx);
@@ -941,7 +958,7 @@ bool Port_LoadAssetRangeToBuffer(const void *base, u32 offset, void *dest, u32 s
 
     if (!LoadAssetMap())
         return false;
-    idx = FindAssetIndexByAddr((u32)base);
+    idx = FindAssetIndexByAddr(LinkAddr(base));
     if (idx < 0 || offset > GetAssetEntry(idx)->size
      || size > GetAssetEntry(idx)->size - offset)
         return false;
@@ -966,7 +983,7 @@ bool Port_LoadAssetPointerToHeap(const void *ptr, u8 **outBuf, u32 *outSize)
     *outSize = 0;
     if (!LoadAssetMap())
         return false;
-    idx = FindAssetIndexForPointer((u32)ptr, &offset);
+    idx = FindAssetIndexForPointer(LinkAddr(ptr), &offset);
     if (idx < 0)
         return false;
     data = GetPayload((u32)idx);
@@ -1011,7 +1028,7 @@ void Port_TransformDecompressed(const void *source, void *data, unsigned size)
     const char *path;
     size_t n;
     u32 offset = 0;
-    s32 idx = FindAssetIndexForPointer((u32)source, &offset);
+    s32 idx = FindAssetIndexForPointer(LinkAddr(source), &offset);
 
     if (idx < 0 || offset != 0 || data == NULL)
         return;
@@ -1034,7 +1051,7 @@ const void *Port_ResolveAssetPointer(const void *ptr)
         return map;
     if (!LoadAssetMap())
         return ptr;
-    idx = FindAssetIndexForPointer((u32)ptr, &offset);
+    idx = FindAssetIndexForPointer(LinkAddr(ptr), &offset);
     if (idx < 0)
         return ptr;
     return ResolveLoaded(idx, offset, ptr);
@@ -1047,7 +1064,7 @@ const void *Port_ResolveAssetPointerSized(const void *ptr, u32 size)
 
     if (!LoadAssetMap())
         return ptr;
-    idx = FindAssetIndexForSizedPointer((u32)ptr, size, &offset);
+    idx = FindAssetIndexForSizedPointer(LinkAddr(ptr), size, &offset);
     if (idx < 0)
         return ptr;
     return ResolveLoaded(idx, offset, ptr);
@@ -1060,7 +1077,7 @@ const void *Port_ResolveAssetPointerInContainingAsset(const void *ptr, u32 size)
 
     if (!LoadAssetMap())
         return ptr;
-    idx = FindInteriorAssetIndexForSizedPointer((u32)ptr, size, &offset);
+    idx = FindInteriorAssetIndexForSizedPointer(LinkAddr(ptr), size, &offset);
     if (idx < 0)
         return Port_ResolveAssetPointerSized(ptr, size);
     return ResolveLoaded(idx, offset, ptr);
@@ -1073,7 +1090,7 @@ u32 Port_GetSpriteFrameSize(const void *base, u32 declaredSize)
     /* sizeof(INCBIN) describes the stub, not the image, in an external build. */
     if (declaredSize >= 32 || base == NULL || !LoadAssetMap())
         return declaredSize;
-    idx = FindAssetIndexByAddr((u32)base);
+    idx = FindAssetIndexByAddr(LinkAddr(base));
     return idx >= 0 ? GetAssetEntry(idx)->size : declaredSize;
 }
 
@@ -1084,7 +1101,7 @@ const void *Port_ResolveSpriteFramePointer(const void *base, u32 size, u32 offse
 
     if (base == NULL || size == 0 || !LoadAssetMap())
         return NULL;
-    idx = FindAssetIndexByAddr((u32)base);
+    idx = FindAssetIndexByAddr(LinkAddr(base));
     if (idx < 0)
         return (const u8 *)base + offset;
     assetSize = GetAssetEntry(idx)->size;
@@ -1100,7 +1117,7 @@ const void *Port_PeekSpriteFramePointer(const void *base, u32 size, u32 offset)
 
     if (base == NULL || size == 0 || !LoadAssetMap())
         return NULL;
-    idx = FindAssetIndexByAddr((u32)base);
+    idx = FindAssetIndexByAddr(LinkAddr(base));
     if (idx < 0)
         return (const u8 *)base + offset;
     assetSize = GetAssetEntry(idx)->size;
@@ -1116,7 +1133,7 @@ bool CtrAssets_PrefetchFind(const void *ptr, CtrAssetPrefetch *out)
 
     if (ptr == NULL || Port_ResolveMapAssetPointer(ptr) != ptr || !LoadAssetMap())
         return false;
-    idx = FindAssetIndexForPointer((u32)ptr, &offset);
+    idx = FindAssetIndexForPointer(LinkAddr(ptr), &offset);
     if (idx < 0)
         return false;
     /* In memory, or the warm-up worker is already reading it. */

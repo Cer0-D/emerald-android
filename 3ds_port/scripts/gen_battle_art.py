@@ -151,6 +151,17 @@ TEAL = {"top": (58, 156, 134), "mid": (70, 174, 148), "low": (44, 128, 112), "ri
         "mint": (156, 226, 206), "dots": (34, 108, 94)}
 
 
+def set_height(h):
+    """A taller canvas (CTR_BOTTOM_HEIGHT, 280 on Android): the backdrop
+    as tall, its ball still in the middle of the menus (centred there)."""
+    global H, BALL_CY
+    BALL_CY = 124 + (h - 240) // 2
+    H = h
+
+
+BALL_CY = 124
+
+
 def backdrop():
     pic = Pic(W, H, (0, 0, 0))
     sz = pic.im.size
@@ -175,7 +186,7 @@ def backdrop():
     pic.paint(TEAL["dots"], dots, 0.55)
     # the Poke Ball, engraved: its outline, the band running out to the sides
     # with a step (a circuit), the centre button
-    cx, cy, R = 160, 124, 104
+    cx, cy, R = 160, BALL_CY, 104
     shapes = pic.blank()
     sd = ImageDraw.Draw(shapes)
 
@@ -513,7 +524,9 @@ def build():
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--output", required=True)
+    ap.add_argument("--height", type=int, default=240, help="the canvas' height (CTR_BOTTOM_HEIGHT)")
     args = ap.parse_args()
+    set_height(args.height)
     data = build()
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     Path(args.output).write_bytes(data)

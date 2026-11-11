@@ -138,7 +138,13 @@ typedef struct
  * dense town would leave the player undrawn, which is a far worse failure
  * than a missing wall.
  */
+/* On Android each card may also take its depth (3D SPRITES, voxel_entities.c):
+ * a pixel-deep board's outline, a few hundred vertices for a walker. */
+#ifdef PLATFORM_ANDROID
+#define VOXEL_SPRITE_RESERVE (VOXEL_SPRITE_SLOTS * (6u + 1200u) + 32u)
+#else
 #define VOXEL_SPRITE_RESERVE (VOXEL_SPRITE_SLOTS * 6u + 32u)
+#endif
 #define VOXEL_REFLECTION_RESERVE (VOXEL_SPRITE_SLOTS * VOXEL_REFLECTION_VERTICES + VOXEL_CLOUD_VERTICES)
 #define VOXEL_DYNAMIC_VERTICES (VOXEL_SPRITE_RESERVE + VOXEL_SHADOW_RESERVE + VOXEL_REFLECTION_RESERVE)
 #define VOXEL_SHADOW_FIRST VOXEL_SPRITE_RESERVE
@@ -4988,6 +4994,15 @@ void CtrVoxel_Idle(void)
  */
 static uint64_t sAfterEndTick;
 static float sTailMs;
+/* Time the platform keeps for game frames it runs unshown before the next
+ * shown one (fast-forward, CtrVoxel_SetFrameReserve): building into it made
+ * every frame late, so every frame was shown and the speed fell to 1x. */
+static float sFrameReserveMs;
+
+void CtrVoxel_SetFrameReserve(float ms)
+{
+    sFrameReserveMs = ms > 0.0f ? ms : 0.0f;
+}
 
 void CtrVoxel_NoteFrameWait(uint64_t waitTick)
 {
@@ -5021,6 +5036,7 @@ void CtrVoxel_AfterSubmit(uint64_t frameBeginTick)
     budget = VOXEL_FRAME_MS - TicksMs(started - frameBeginTick) - sOthersMs - VOXEL_AFTER_MARGIN_MS;
     if (sCrossingSoon)
         budget -= VOXEL_CROSSING_RESERVE_MS;
+    budget -= sFrameReserveMs;
     budget = Clamp(budget, 0.0f, VOXEL_AFTER_MAX_MS);
     sStats.afterBudgetMs = budget;
     if (budget < VOXEL_AFTER_STARVED_MS)

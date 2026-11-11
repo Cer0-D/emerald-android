@@ -21,6 +21,9 @@ bool CtrVoxel_Update(void);
  * finishes is uploaded by the next Update.
  */
 void CtrVoxel_AfterSubmit(uint64_t frameBeginTick);
+/* Milliseconds of each shown frame AfterSubmit leaves alone for the game
+ * frames run unshown before the next one (fast-forward); 0 at normal speed. */
+void CtrVoxel_SetFrameReserve(float ms);
 /* Called just before the next C3D_FrameBegin() waits, with the tick: what ran
  * between the end of AfterSubmit and here (the game, the audio, the bottom
  * screen, the compositor's preparation, the log) is the share the next

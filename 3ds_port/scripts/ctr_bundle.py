@@ -67,13 +67,27 @@ def elf_symbols(elf: Path) -> dict[str, int]:
     out = subprocess.check_output([tool("arm-none-eabi-readelf"), "--wide", "--symbols", str(elf)],
                                   text=True, errors="ignore")
     result: dict[str, int] = {}
+    # A shared library built with hidden visibility (the Android port) has
+    # its globals as LOCAL in .symtab: CTR_BUNDLE_LOCALS=1 also takes a local
+    # definition, when it is the only one of its name and no global has it.
+    locals_ok = os.environ.get("CTR_BUNDLE_LOCALS") == "1"
+    local: dict[str, list[int]] = {}
     for line in out.splitlines():
         parts = line.split()
         if len(parts) < 8 or not parts[0].endswith(":"):
             continue
-        if parts[4] not in {"GLOBAL", "WEAK"} or parts[6] == "UND":
+        if parts[6] == "UND":
+            continue
+        if parts[4] == "LOCAL":
+            if locals_ok and parts[3] in {"FUNC", "OBJECT", "NOTYPE"}:
+                local.setdefault(parts[7], []).append(int(parts[1], 16))
+            continue
+        if parts[4] not in {"GLOBAL", "WEAK"}:
             continue
         result[parts[7]] = int(parts[1], 16)
+    for name, addrs in local.items():
+        if name not in result and len(set(addrs)) == 1:
+            result[name] = addrs[0]
     return result
 
 

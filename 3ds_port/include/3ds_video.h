@@ -15,7 +15,11 @@ bool CtrVideo_TryVoxelAnimUpload(void);
 void CtrVideo_CopiesBegin(void);
 void CtrVideo_CopiesEnd(void);
 
+#ifdef PLATFORM_ANDROID
+#define CTR_GAME_WIDTH 432 /* gba/defines.h DISPLAY_WIDTH */
+#else
 #define CTR_GAME_WIDTH 400
+#endif
 #define CTR_GAME_HEIGHT 240
 
 /*

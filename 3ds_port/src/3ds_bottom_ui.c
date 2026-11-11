@@ -195,6 +195,13 @@ bool8 CtrBottom_NativeMenus(void);
 static u16 sCanvas[W * H] __attribute__((aligned(32)));
 static u16 *sDst = sCanvas;
 static int sOX;
+/*
+ * sOY moves views down as sOX moves them across: a canvas taller than the
+ * 3DS's 240 rows (CTR_BOTTOM_EXTRA, the Thor's bottom display) centres in its
+ * content area the views laid out for 240, between the header at the top and
+ * the dock at the foot. Zero on the 3DS.
+ */
+static int sOY;
 
 /* The menu's backdrop; the party menu's background, under a battle without
  * its art; the backdrop with the map's window; with the game's window; and
@@ -251,6 +258,7 @@ static void CopyCache(int which)
 static inline void Put(int x, int y, u16 c)
 {
     x += sOX;
+    y += sOY;
     if (x < sClipX0 || x >= sClipX1 || y < sClipY0 || y >= sClipY1)
         return;
     sDst[x * H + (H - 1 - y)] = c;
@@ -258,7 +266,7 @@ static inline void Put(int x, int y, u16 c)
 
 static void FillRect(int x, int y, int w, int h, u16 c)
 {
-    int x0 = x + sOX, x1 = x0 + w, y0 = y, y1 = y + h;
+    int x0 = x + sOX, x1 = x0 + w, y0 = y + sOY, y1 = y0 + h;
 
     if (x0 < sClipX0) x0 = sClipX0;
     if (x1 > sClipX1) x1 = sClipX1;
@@ -275,7 +283,7 @@ static void FillRect(int x, int y, int w, int h, u16 c)
 /* Black at half opacity over what is there: each RGB565 channel halved. */
 static void ShadeRect(int x, int y, int w, int h)
 {
-    int x0 = x + sOX, x1 = x0 + w, y0 = y, y1 = y + h;
+    int x0 = x + sOX, x1 = x0 + w, y0 = y + sOY, y1 = y0 + h;
 
     if (x0 < sClipX0) x0 = sClipX0;
     if (x1 > sClipX1) x1 = sClipX1;
@@ -315,6 +323,7 @@ static void DrawTile(const u8 *tile, int x, int y, const u16 *pal, bool8 hflip, 
 {
     int sx0 = x + sOX;
 
+    y += sOY;
     if (sx0 >= sClipX1 || y >= sClipY1 || sx0 + 8 <= sClipX0 || y + 8 <= sClipY0)
         return;
     if (sx0 >= sClipX0 && y >= sClipY0 && sx0 + 8 <= sClipX1 && y + 8 <= sClipY1)
@@ -986,7 +995,7 @@ static void DrawBta(u8 id, int ax, int ay, Rgb colour, Rgb ring)
     if (!e || !e->alpha || !e->a)
         return;
     x0 = ax + e->x + sOX;
-    y0 = ay + e->y;
+    y0 = ay + e->y + sOY;
     i0 = sClipX0 - x0 > 0 ? sClipX0 - x0 : 0;
     j0 = sClipY0 - y0 > 0 ? sClipY0 - y0 : 0;
     i1 = sClipX1 - x0 < e->w ? sClipX1 - x0 : e->w;
@@ -1037,7 +1046,7 @@ static void DrawCoverage(const u8 *cover, int w, int h, int x, int y, Rgb colour
             continue;
         for (int j = 0; j < h; ++j)
         {
-            int sy = y + j, al = cover[j * w + i];
+            int sy = y + j + sOY, al = cover[j * w + i];
             u16 *dst;
             Rgb under;
 
@@ -1343,6 +1352,8 @@ static int DrawGlyph(const Font *font, u16 glyph, int x, int y, u16 fg, u16 shad
 {
     int width = GlyphWidth(font, glyph);
     int sx = x + sOX;
+
+    y += sOY;
     bool8 inside = sx >= sClipX0 && y >= sClipY0 && sx + width <= sClipX1 && y + font->height <= sClipY1;
     u16 *origin = sDst + (inside ? sx * H + (H - 1 - y) : 0);
 
@@ -2074,7 +2085,7 @@ static void DrawSmoothStr(const Font *font, const u8 *str, int x, int y, int k, 
         for (int j = 0; j < t->h; ++j)
         {
             const u8 *p = t->px + (j * t->w + i) * 4;
-            int sy = y + j;
+            int sy = y + j + sOY;
             u16 *dst;
             Rgb under;
 
@@ -2493,7 +2504,7 @@ static u8 sHitCount;
 static void AddHit(int x, int y, int w, int h, u8 id)
 {
     if (sHitCount < ARRAY_COUNT(sHits))
-        sHits[sHitCount++] = (Hit){x + sOX, y, w, h, id};
+        sHits[sHitCount++] = (Hit){x + sOX, y + sOY, w, h, id};
 }
 
 static u8 HitTest(int x, int y)
@@ -4007,7 +4018,7 @@ static const Tint *GetTint(u8 id, Rgb colour, Rgb ring)
 
 static void DrawTint(const Tint *t, int ax, int ay)
 {
-    int x0 = ax + t->x + sOX, y0 = ay + t->y;
+    int x0 = ax + t->x + sOX, y0 = ay + t->y + sOY;
     int i0 = sClipX0 - x0 > 0 ? sClipX0 - x0 : 0, i1 = sClipX1 - x0 < t->w ? sClipX1 - x0 : t->w;
     /* Rows y0 .. y0 + h - 1 are column indices h - 1 .. 0 (bottom up). */
     int k0 = y0 + t->h - sClipY1, k1 = y0 + t->h - sClipY0;
@@ -4223,7 +4234,7 @@ static void DrawCached(int pid, u8 state, u32 stamp, int ax, int ay, u8 tintBase
         return;
     }
     bool8 warm = sCompBuild && sCompBudget && !sCompCapture;
-    int rx = ax + e->x, ry = ay + e->y;
+    int rx = ax + e->x, ry = ay + e->y + sOY;
     bool8 show = !warm && !sCompBuild && !sCompCapture && sBuildBudget == 0xFF && sDst == sCanvas && sIconsReady
               && sShowCaptures && rx >= sClipX0 && ry >= sClipY0 && rx + e->w <= sClipX1 && ry + e->h <= sClipY1;
 
@@ -4685,7 +4696,7 @@ static void WarmBattleMenus(void)
     uint64_t start;
     float slice;
     u8 battler = GetBattlerAtPosition(B_POSITION_PLAYER_LEFT);
-    int ox = sOX, hits = sHitCount, clip[4] = {sClipX0, sClipY0, sClipX1, sClipY1};
+    int ox = sOX, oy = sOY, hits = sHitCount, clip[4] = {sClipX0, sClipY0, sClipX1, sClipY1};
     u32 key = 1;
     float room;
 
@@ -4751,6 +4762,9 @@ static void WarmBattleMenus(void)
     }
     ResolveFonts();
     sOX = 0;
+    /* As the battle's views are drawn (Redraw): the pictures keep where
+     * they were made, so made where they are shown. */
+    sOY = CTR_BOTTOM_EXTRA / 2;
     sClipX0 = sClipY0 = sClipX1 = sClipY1 = 0;
     sBuildBudget = 1;
     /* A label is built a few milliseconds a frame, not all at once. */
@@ -4839,6 +4853,7 @@ static void WarmBattleMenus(void)
         sWarmKey = key;
     sBuildBudget = 0xFF;
     sOX = ox;
+    sOY = oy;
     sHitCount = hits;
     sClipX0 = clip[0];
     sClipY0 = clip[1];
@@ -4916,7 +4931,7 @@ static bool8 WarmQuickBalls(const ViewState *s)
     static unsigned starved;
     static u16 count, balls[2], counts[2];
     static bool8 ready;
-    int ox = sOX, hits = sHitCount, clip[4] = {sClipX0, sClipY0, sClipX1, sClipY1};
+    int ox = sOX, oy = sOY, hits = sHitCount, clip[4] = {sClipX0, sClipY0, sClipX1, sClipY1};
     bool8 icons = TRUE;
     float slice;
 
@@ -4944,6 +4959,9 @@ static bool8 WarmQuickBalls(const ViewState *s)
         return FALSE;
     ResolveFonts();
     sOX = 0;
+    /* As the battle's views are drawn (Redraw): the pictures keep where
+     * they were made, so made where they are shown. */
+    sOY = CTR_BOTTOM_EXTRA / 2;
     sClipX0 = sClipY0 = sClipX1 = sClipY1 = 0;
     sBuildBudget = 1;
     sSliceStart = CtrPlatform_Ticks();
@@ -4956,6 +4974,7 @@ static bool8 WarmQuickBalls(const ViewState *s)
     sSliceMs = 0.0f;
     sBuildBudget = 0xFF;
     sOX = ox;
+    sOY = oy;
     sHitCount = hits;
     sClipX0 = clip[0];
     sClipY0 = clip[1];
@@ -4971,6 +4990,7 @@ static bool8 WarmQuickBalls(const ViewState *s)
 static void BuildBackgroundCaches(void)
 {
     sOX = 0;
+    sOY = 0;
     /* The menu's backdrop; the map's window on it; the game's window on it,
      * black inside until the game's picture is there. A battle without its
      * art keeps the party menu's background. */
@@ -4982,8 +5002,10 @@ static void BuildBackgroundCaches(void)
     {
         memcpy(sCache[CACHE_GAME], sCache[CACHE_MENU], sizeof(sCanvas));
         sDst = sCache[CACHE_GAME];
+        sOY = CTR_BOTTOM_EXTRA / 2;
         DrawChamferFrame(GAME_WIN_X, GAME_WIN_Y, GAME_WIN_W, GAME_WIN_H, 4, 2);
         FillRect(CTR_BOTTOM_WIN_X, CTR_BOTTOM_WIN_Y, 240, 160, 0);
+        sOY = 0;
     }
     sDst = sCanvas;
 }
@@ -5178,6 +5200,7 @@ static void Render(const ViewState *s)
         sHitCount = sMapCache.hitCount;
         sDst = sCanvas;
         sOX = 0;
+        sOY = 0;
         if (!sIntro.defer)
             CtrBottom_Blit(sCanvas, 0, W);
         sMapShotOk = TRUE;
@@ -5187,6 +5210,7 @@ static void Render(const ViewState *s)
     sHitCount = 0;
     sDst = sCanvas;
     sOX = 0;
+    sOY = 0;
 
     if (s->mode == MODE_OFF)
     {
@@ -5200,12 +5224,14 @@ static void Render(const ViewState *s)
     {
         CopyCache(sCache[CACHE_BATTLE] ? CACHE_BATTLE : CACHE_WIDE);
         phase[1] = CtrPlatform_Ticks();
+        sOY = CTR_BOTTOM_EXTRA / 2;
         if (s->mode == MODE_BATTLE_ACTION)
             DrawBattleActions(s);
         else if (s->mode == MODE_BATTLE_MOVE)
             DrawBattleMoves(s);
         else if (s->mode == MODE_BATTLE_TARGET)
             DrawBattleTarget(s);
+        sOY = 0;
         phase[2] = CtrPlatform_Ticks();
     }
     else if (!s->dock)
@@ -5221,6 +5247,9 @@ static void Render(const ViewState *s)
             EnsureMapCache(s);
         CopyCache(SectionCache(s));
         phase[1] = CtrPlatform_Ticks();
+        /* The views centred between the header and the dock; the map's
+         * window has the whole content area (RMAP_WIN_*). */
+        sOY = !s->native && s->screen == SCR_MAP && !s->encView ? 0 : CTR_BOTTOM_EXTRA / 2;
         if (s->native)
             DrawGameView(s);
         else switch (s->screen)
@@ -5245,6 +5274,7 @@ static void Render(const ViewState *s)
          * window by the compositor; black until they are, as they fade in
          * from black, and while the field is on its way to opening them
          * (OpenAsked): the cache's. */
+        sOY = 0;
         phase[2] = CtrPlatform_Ticks();
         DrawHeader(s);
         DrawDock(s);
@@ -5583,6 +5613,14 @@ static void RenderPart(const ViewState *s, int x0, int y0, int x1, int y1);
 /* Draws one part of the screen. The canvas outside it keeps what is shown. */
 static void RenderPart(const ViewState *s, int x0, int y0, int x1, int y1)
 {
+#if CTR_BOTTOM_EXTRA
+    /* A taller canvas's views are moved (sOY), and some parts are found in
+     * the coordinates they were laid out in: the whole screen every time,
+     * which a phone's CPU does without noticing. */
+    x0 = y0 = 0;
+    x1 = W;
+    y1 = H;
+#endif
     if (x0 < 0) x0 = 0;
     if (y0 < 0) y0 = 0;
     if (x1 > W) x1 = W;
@@ -7140,6 +7178,7 @@ static bool8 MoveMapCursor(const ViewState *from, const ViewState *to)
                (size_t)(r[0][3] - r[0][1]) * sizeof(u16));
     sDst = sCanvas;
     sOX = 0;
+    sOY = 0;
     /* The mark, and a picked cell's cursor over it, as Render draws them. */
     DrawMapMarks(to);
     for (int k = 0; k < 2; ++k)
@@ -7453,7 +7492,7 @@ static void WarmScreens(bool8 battle)
 {
     bool8 *done = battle ? sWarmBattleDone : sWarmScreenDone;
     static ViewState v;
-    int ox = sOX, hits = sHitCount, clip[4] = {sClipX0, sClipY0, sClipX1, sClipY1};
+    int ox = sOX, oy = sOY, hits = sHitCount, clip[4] = {sClipX0, sClipY0, sClipX1, sClipY1};
     bool8 refine = sRefineLabels, worked = sRedrawLabelWorked, bad = sCompBad, icons = sIconBudget;
     u32 misses = sLabelMisses;
     float slice;
@@ -7490,6 +7529,7 @@ static void WarmScreens(bool8 battle)
         }
         ResolveFonts();
         sOX = 0;
+        sOY = 0;
         sClipX0 = sClipY0 = sClipX1 = sClipY1 = 0;
         sBuildBudget = 0;
         sIconBudget = FALSE;
@@ -7533,6 +7573,7 @@ static void WarmScreens(bool8 battle)
     sCompBad = bad;
     sLabelMisses = misses;
     sOX = ox;
+    sOY = oy;
     sHitCount = hits;
     sClipX0 = clip[0];
     sClipY0 = clip[1];
