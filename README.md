@@ -112,7 +112,7 @@ What works and what does not yet, compared with Emerald 3DS:
 | Voxel overworld and 3D battles | Working |
 | Sound and music | Working |
 | Fast-forward | Working |
-| Day/night lighting | Ported, not fully tested yet |
+| Day/night lighting | Ported, currently not working |
 | Building the game data in the app | Working (English cartridge) |
 | Other languages (ES, FR, IT, DE, JA, PT-BR) | Not ported yet |
 | Follower Pokémon (HeartGold/SoulSilver sprites) | Not ported yet: the app does not download them |
