@@ -73,6 +73,58 @@ except ImportError:
     sys.exit("check_overlays: needs libclang's Python bindings (Arch: the clang package; "
              "elsewhere: pip install libclang) for the system python3")
 
+# The libclang wheels (up to 18.1.1 at least) export
+# clang_getCursorBinaryOperatorKind but do not wrap it, so Cursor has no
+# binary_operator and an addition cannot be told from a subtraction. Define it
+# from the C API, whose numbering is CXBinaryOperatorKind in clang-c/Index.h.
+if not hasattr(ci.Cursor, "binary_operator"):
+    from enum import IntEnum
+
+    class BinaryOperator(IntEnum):
+        Invalid = 0
+        PtrMemD = 1
+        PtrMemI = 2
+        Mul = 3
+        Div = 4
+        Rem = 5
+        Add = 6
+        Sub = 7
+        Shl = 8
+        Shr = 9
+        Cmp = 10
+        LT = 11
+        GT = 12
+        LE = 13
+        GE = 14
+        EQ = 15
+        NE = 16
+        And = 17
+        Xor = 18
+        Or = 19
+        LAnd = 20
+        LOr = 21
+        Assign = 22
+        MulAssign = 23
+        DivAssign = 24
+        RemAssign = 25
+        AddAssign = 26
+        SubAssign = 27
+        ShlAssign = 28
+        ShrAssign = 29
+        AndAssign = 30
+        XorAssign = 31
+        OrAssign = 32
+        Comma = 33
+
+    _binary_operator_kind = ci.conf.lib.clang_getCursorBinaryOperatorKind
+    _binary_operator_kind.argtypes = [ci.Cursor]
+    _binary_operator_kind.restype = ctypes.c_int
+
+    if not hasattr(ci, "BinaryOperator"):
+        ci.BinaryOperator = BinaryOperator
+    ci.Cursor.binary_operator = property(
+        lambda self: ci.BinaryOperator(_binary_operator_kind(self)))
+
 TRIPLE = "aarch64-linux-android33"
 ALLOW = Path(__file__).with_name("check_overlays.allow")
 STORAGE_MARK = "emerald_overlay_storage"  # task.h: TASK_STATE's blocks
