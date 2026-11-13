@@ -45,7 +45,8 @@ pinned interpreter and Pillow (`build/venv`), `VOXEL_LOCAL=1` runs it directly.
 
 ## Status
 
-The French variant builds, and its recipe rebuilds the data pack byte for byte
-with the app's Java builder (`PackBuilder`) and with the desktop builder. It
-has not been played on a device yet; the setup screen, the game, saves and
+The French and Italian variants build, and each recipe rebuilds its data pack
+byte for byte with the app's Java builder (`PackBuilder`) and with the desktop
+builder (6,394 files, ABI `770cc65b` for French and `a6ddd39a` for Italian).
+Neither has been played on a device yet; the setup screen, the game, saves and
 battles still need a dual-screen Android device.

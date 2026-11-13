@@ -156,8 +156,8 @@ What works and what does not yet, compared with Emerald 3DS:
 | Sound and music | Working |
 | Fast-forward | Working |
 | Day/night lighting | Working |
-| Building the game data in the app | Working (English; French pipeline validated, device testing pending) |
-| Other languages (ES, FR, IT, DE, JA, PT-BR) | Buildable with `--locale` (docs/ANDROID-LANGUAGES.md); French's data pipeline is validated, device play testing pending |
+| Building the game data in the app | Working (English; French and Italian pipelines validated, device testing pending) |
+| Other languages (ES, FR, IT, DE, JA, PT-BR) | Buildable with `--locale` (docs/ANDROID-LANGUAGES.md); French and Italian are built and their data pipelines validated, device play testing pending |
 | Follower Pokémon (HeartGold/SoulSilver sprites) | Not ported yet: the app does not download them |
 | Local wireless play (Bluetooth) | Working: link rooms. Trades, battles and minigames not fully tested |
 | Single-screen devices | Not supported yet (planned) |

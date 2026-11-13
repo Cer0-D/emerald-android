@@ -102,14 +102,14 @@ final class Setup {
         return new String[]{"en", "Pokémon Emerald (USA, Europe)"};
     }
 
-    /* The setup screen's own words: English, or French for a French build. */
+    /* The setup screen's own words, in the build's language. */
     static final class Texts {
-        final boolean french;
+        final String locale;
         final String title, message, choose, readingRom, readingRecipe, failed;
 
-        Texts(boolean french, String title, String message, String choose, String readingRom,
+        Texts(String locale, String title, String message, String choose, String readingRom,
               String readingRecipe, String failed) {
-            this.french = french;
+            this.locale = locale;
             this.title = title;
             this.message = message;
             this.choose = choose;
@@ -119,40 +119,68 @@ final class Setup {
         }
 
         static Texts of(String locale, String rom) {
-            if ("fr".equals(locale))
-                return new Texts(true, "Émeraude pour Android",
-                        "Pour jouer, choisissez votre propre ROM " + rom + ".\n"
-                                + "Les données du jeu sont construites à partir d'elle sur cet appareil ; "
-                                + "la ROM n'est que lue, jamais copiée ni envoyée.",
-                        "Choisir la ROM", "Lecture de la ROM", "Lecture de la recette",
-                        "Les données du jeu n'ont pas pu être construites : ");
-            return new Texts(false, "Emerald for Android",
-                    "To play, choose your own " + rom + ".\n"
-                            + "The game's data is built from it on this device; the ROM is only read, "
-                            + "never copied or sent anywhere.",
-                    "Choose ROM", "Reading the ROM", "Reading the recipe",
-                    "The game data could not be built: ");
+            switch (locale) {
+                case "fr":
+                    return new Texts("fr", "Émeraude pour Android",
+                            "Pour jouer, choisissez votre propre ROM " + rom + ".\n"
+                                    + "Les données du jeu sont construites à partir d'elle sur cet appareil ; "
+                                    + "la ROM n'est que lue, jamais copiée ni envoyée.",
+                            "Choisir la ROM", "Lecture de la ROM", "Lecture de la recette",
+                            "Les données du jeu n'ont pas pu être construites : ");
+                case "it":
+                    return new Texts("it", "Smeraldo per Android",
+                            "Per giocare, scegli la tua ROM " + rom + ".\n"
+                                    + "I dati del gioco vengono costruiti da essa su questo dispositivo; "
+                                    + "la ROM viene solo letta, mai copiata o inviata.",
+                            "Scegli la ROM", "Lettura della ROM", "Lettura della ricetta",
+                            "Impossibile costruire i dati del gioco: ");
+                default:
+                    return new Texts("en", "Emerald for Android",
+                            "To play, choose your own " + rom + ".\n"
+                                    + "The game's data is built from it on this device; the ROM is only read, "
+                                    + "never copied or sent anywhere.",
+                            "Choose ROM", "Reading the ROM", "Reading the recipe",
+                            "The game data could not be built: ");
+            }
         }
 
         String notRom(String label, String expected, String actual) {
-            if (french)
-                return "Ce n'est pas la ROM prise en charge.\n\nIl faut " + label + " (SHA-1 " + expected
-                        + ") ; ce fichier a le SHA-1 " + actual + ".";
-            return "This is not the supported ROM.\n\n" + label + " is needed (SHA-1 " + expected
-                    + "); this file's SHA-1 is " + actual + ".";
+            switch (locale) {
+                case "fr":
+                    return "Ce n'est pas la ROM prise en charge.\n\nIl faut " + label + " (SHA-1 "
+                            + expected + ") ; ce fichier a le SHA-1 " + actual + ".";
+                case "it":
+                    return "Questa non è la ROM supportata.\n\nServe " + label + " (SHA-1 " + expected
+                            + "); questo file ha lo SHA-1 " + actual + ".";
+                default:
+                    return "This is not the supported ROM.\n\n" + label + " is needed (SHA-1 " + expected
+                            + "); this file's SHA-1 is " + actual + ".";
+            }
         }
 
         /* PackBuilder's progress lines, in the setup screen's language. */
         String step(String message) {
-            if (!french) return message;
-            switch (message) {
-                case "Checking the ROM": return "Vérification de la ROM";
-                case "Building the 3D world": return "Construction du monde 3D";
-                case "Extracting the game data": return "Extraction des données du jeu";
-                case "Checking the data pack": return "Vérification du pack de données";
-                case "Done": return "Terminé";
-                default: return message;
+            switch (locale) {
+                case "fr":
+                    switch (message) {
+                        case "Checking the ROM": return "Vérification de la ROM";
+                        case "Building the 3D world": return "Construction du monde 3D";
+                        case "Extracting the game data": return "Extraction des données du jeu";
+                        case "Checking the data pack": return "Vérification du pack de données";
+                        case "Done": return "Terminé";
+                    }
+                    break;
+                case "it":
+                    switch (message) {
+                        case "Checking the ROM": return "Verifica della ROM";
+                        case "Building the 3D world": return "Costruzione del mondo 3D";
+                        case "Extracting the game data": return "Estrazione dei dati di gioco";
+                        case "Checking the data pack": return "Verifica del pacchetto dati";
+                        case "Done": return "Fatto";
+                    }
+                    break;
             }
+            return message;
         }
     }
 
