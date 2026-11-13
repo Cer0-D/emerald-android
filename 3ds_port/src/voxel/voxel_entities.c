@@ -2033,9 +2033,13 @@ unsigned VoxelEntities_Emit(VoxelBuilder *builder, uint16_t *atlas, const VoxelC
             cz = reference->worldZ + 0.5f + (base - reference->base) / VOXEL_PIXELS_PER_TILE;
             if (fabsf(cx - camera->targetX) > 24.0f || fabsf(cz - camera->targetZ) > 24.0f)
                 continue;
+            /* A visible wild Pokemon is a walker as the objects are: 3D
+             * SPRITES gives its card depth too. */
+            sDepthCards = sDepthAtlas != NULL && VisibleWild_IsSprite((u8)(sprite - gSprites));
             EmitBillboard(builder, &sSlots[effect->slot], effect->slot, cx, cz, 0.0f, 0.0f,
                           -sprite->y2 * pixel, reference->deck, rightX, rightZ, stretch,
                           reference->shade, SpriteScale(sprite));
+            sDepthCards = false;
         }
     }
     return updates;

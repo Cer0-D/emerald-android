@@ -53,14 +53,33 @@ javac -source 11 -target 11 -Xlint:-options -classpath "$PLATFORM" -d "$OUT/clas
     $(find "$HERE/app/java" -name '*.java')
 "$BT/d8" --min-api 33 --lib "$PLATFORM" --output "$OUT/dex" $(find "$OUT/classes" -name '*.class')
 
+# The assets: a release's engine files and recipe (ASSETS), and in every APK
+# the list of the follower files the app downloads (FollowerFetcher.java):
+# builder/emerald3ds_builder/followers_sources.py as JSON.
+mkdir -p "$OUT/assets/followers"
+[[ -z "${ASSETS:-}" ]] || cp -r "$ASSETS/." "$OUT/assets/"
+"${PYTHON:-python3}" -I -c 'import json, runpy, sys
+json.dump(runpy.run_path(sys.argv[1])["SOURCES"], open(sys.argv[2], "w"), separators=(",", ":"))' \
+    "$HERE/../builder/emerald3ds_builder/followers_sources.py" "$OUT/assets/followers/sources.json"
+
 # A development APK is debuggable and installs as com.cer0.emerald.dev, beside
 # the release app (debug-signed, it could not update it); a release one
 # (RELEASE=1, tools/release.sh) is com.cer0.emerald, not debuggable.
 # The resources: the launcher icon (app/res, made by tools/make_icon.py).
+# A development APK is also named apart on the launcher (APP_LABEL, default
+# "Emerald Dev"), so the two installs can be told apart.
+MANIFEST="$HERE/app/AndroidManifest.xml"
+if [[ -z "${RELEASE:-}" ]]; then
+    MANIFEST="$OUT/AndroidManifest.xml"
+    sed "s|android:label=\"Emerald for Android\"|android:label=\"${APP_LABEL:-Emerald Dev}\"|" \
+        "$HERE/app/AndroidManifest.xml" > "$MANIFEST"
+    grep -q "android:label=\"${APP_LABEL:-Emerald Dev}\"" "$MANIFEST" \
+        || { echo "build_apk.sh: could not rename the development app" >&2; exit 1; }
+fi
 "$BT/aapt2" compile --dir "$HERE/app/res" -o "$OUT/res.zip"
-"$BT/aapt2" link -o "$OUT/base.apk" -I "$PLATFORM" --manifest "$HERE/app/AndroidManifest.xml" "$OUT/res.zip" \
+"$BT/aapt2" link -o "$OUT/base.apk" -I "$PLATFORM" --manifest "$MANIFEST" "$OUT/res.zip" \
     --version-name "$VERSION_NAME" --version-code "$VERSION_CODE" --replace-version \
-    ${ASSETS:+-A "$ASSETS"} $([[ -n "${RELEASE:-}" ]] || echo --debug-mode --rename-manifest-package com.cer0.emerald.dev)
+    -A "$OUT/assets" $([[ -n "${RELEASE:-}" ]] || echo --debug-mode --rename-manifest-package com.cer0.emerald.dev)
 ( cd "$OUT/dex" && zip -q "$OUT/base.apk" classes.dex )
 ( cd "$OUT" && zip -q -0 "$OUT/base.apk" "lib/$ABI/libemerald.so" "lib/$ABI/libemeraldboot.so" )
 

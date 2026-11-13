@@ -381,12 +381,40 @@ static bool PathValid(const char *path)
     return path != NULL && *path && *path != '/' && strstr(path, "..") == NULL && strchr(path, ':') == NULL;
 }
 
-FILE *CtrData_Open(const char *path)
+/*
+ * The follower's sprites and texts (src/follower_mon.c) when the game data has
+ * none: on Android the app downloads them itself, beside the pack
+ * (FollowerFetcher.java), so they need neither the ROM nor a new pack. Each
+ * file is renamed into place whole.
+ */
+#define CTR_DATA_EXTRA_PREFIX "followers/"
+
+static FILE *OpenExtra(const char *path)
 {
     char full[512];
 
+    if (strncmp(path, CTR_DATA_EXTRA_PREFIX, sizeof(CTR_DATA_EXTRA_PREFIX) - 1) != 0)
+        return NULL;
+    snprintf(full, sizeof(full), CTR_DATA_DIR "%s", path);
+    return fopen(full, "rb");
+}
+
+static FILE *OpenBackend(const char *path);
+
+FILE *CtrData_Open(const char *path)
+{
+    FILE *file;
+
     if (!PathValid(path))
         return NULL;
+    file = OpenBackend(path);
+    return file != NULL ? file : OpenExtra(path);
+}
+
+static FILE *OpenBackend(const char *path)
+{
+    char full[512];
+
     switch (sBackend)
     {
     case CTR_DATA_ROMFS:
@@ -422,9 +450,14 @@ bool CtrData_Size(const char *path, uint32_t *outSize)
     if (sBackend == CTR_DATA_PAK)
     {
         const CtrPakEntry *entry = PathValid(path) ? FindEntry(path) : NULL;
-        if (entry != NULL && outSize != NULL)
-            *outSize = entry->rawSize;
-        return entry != NULL;
+        if (entry != NULL)
+        {
+            if (outSize != NULL)
+                *outSize = entry->rawSize;
+            return true;
+        }
+        if (!PathValid(path) || strncmp(path, CTR_DATA_EXTRA_PREFIX, sizeof(CTR_DATA_EXTRA_PREFIX) - 1) != 0)
+            return false;
     }
     FILE *file = CtrData_Open(path);
     long size;

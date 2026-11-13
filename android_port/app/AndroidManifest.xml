@@ -13,6 +13,11 @@
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <!-- The follower Pokémon's sprites and texts: HeartGold/SoulSilver's,
+         downloaded from GitHub at the commits the APK pins
+         (FollowerFetcher.java), as Emerald 3DS's builder gets them. Nothing
+         else is sent or received; the ROM never leaves the device. -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:label="Emerald for Android"

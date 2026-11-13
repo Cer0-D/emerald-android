@@ -35,6 +35,7 @@ public class MainActivity extends Activity {
     static native void nativeTouch(int action, float x, float y, int w, int h);
     static native void nativePause(boolean paused);
     static native void nativeCapture();
+    static native String nativeFollowerLanguage(); // the follower texts' language (FollowerFetcher)
 
     public static final int SCREEN_TOP = 0, SCREEN_BOTTOM = 1;
 
@@ -99,6 +100,9 @@ public class MainActivity extends Activity {
         getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         // Local wireless play's radio (Bluetooth LE) asks through this activity.
         LocalBluetooth.attach(this);
+        // The follower Pokémon's sprites and texts, downloaded in the
+        // background until they are all there (FollowerFetcher).
+        FollowerFetcher.start(this, nativeFollowerLanguage());
         /*
          * A release APK carries the engine files and the recipe (assets/engine,
          * assets/builder: android.mk android-release), never game data: the
