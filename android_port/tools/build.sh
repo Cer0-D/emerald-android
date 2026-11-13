@@ -3,7 +3,7 @@
 #
 #   android_port/tools/build.sh [--release] [--roms DIR] [--no-install]
 #
-# LANGS=en,fr,it,de narrows the languages (default: every supported one whose
+# LANGS=en,fr,it,de,es narrows the languages (default: every supported one whose
 # clean ROM is in DIR - default $EMERALD_ROMS or ~/Documents/gba_roms - found
 # by SHA-1). A development build (the default) skips a language without its
 # ROM, is debuggable, installs as com.cer0.emerald.dev ("Emerald Dev") and is
@@ -50,22 +50,24 @@ while [[ $# -gt 0 ]]; do
 done
 
 # The supported cartridges: code, clean ROM SHA-1, the name the app shows.
-SUPPORTED=(en fr it de)
+SUPPORTED=(en fr it de es)
 declare -A SHA1=(
     [en]=f3ae088181bf583e55daf962a92bb46f4f1d07b7
     [fr]=ca666651374d89ca439007bed54d839eb7bd14d0
     [it]=1692db322400c3141c5de2db38469913ceb1f4d4
     [de]=61c2eb2b380b1a75f0c94b767a2d4c26cd7ce4e3
+    [es]=fe1558a3dcb0360ab558969e09b690888b846dd9
 )
 declare -A LABEL=(
     [en]="Pokémon Emerald (USA, Europe)"
     [fr]="Pokémon Émeraude (France)"
     [it]="Pokémon Smeraldo (Italia)"
     [de]="Pokémon Smaragd (Deutschland)"
+    [es]="Pokémon Esmeralda (España)"
 )
-declare -A STEM=([fr]=french [it]=italian [de]=german)
-declare -A FLAG=([fr]=--french-rom [it]=--italian-rom [de]=--german-rom)
-declare -A GAME=([fr]=BPEF [it]=BPEI [de]=BPED)
+declare -A STEM=([fr]=french [it]=italian [de]=german [es]=spanish)
+declare -A FLAG=([fr]=--french-rom [it]=--italian-rom [de]=--german-rom [es]=--spanish-rom)
+declare -A GAME=([fr]=BPEF [it]=BPEI [de]=BPED [es]=BPES)
 
 OUT="$REPO/build/android-$MODE"
 GBA_ELF="${GBA_ELF:-$REPO/build/gba-elf/pokeemerald/pokeemerald.elf}"

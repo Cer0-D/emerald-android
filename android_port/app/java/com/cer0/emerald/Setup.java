@@ -103,6 +103,13 @@ final class Setup {
                                     + "die ROM wird nur gelesen, nie kopiert oder gesendet.",
                             "ROM wählen", "ROM wird gelesen", "Rezept wird gelesen",
                             "Die Spieldaten konnten nicht erzeugt werden: ");
+                case "es":
+                    return new Texts("es", "Esmeralda para Android",
+                            "Para jugar, elige tu propia ROM de Pokémon Esmeralda:\n" + roms + "\n\n"
+                                    + "Los datos del juego se crean a partir de ella en este dispositivo; "
+                                    + "la ROM solo se lee, nunca se copia ni se envía.",
+                            "Elegir ROM", "Leyendo la ROM", "Leyendo la receta",
+                            "No se pudieron crear los datos del juego: ");
                 case "it":
                     return new Texts("it", "Smeraldo per Android",
                             "Per giocare, scegli la tua ROM di Pokémon Smeraldo:\n" + roms + "\n\n"
@@ -129,6 +136,9 @@ final class Setup {
                 case "de":
                     return "Dies ist nicht die unterstützte ROM.\n\nBenötigt wird " + label
                             + " (SHA-1 " + expected + "); diese Datei hat den SHA-1 " + actual + ".";
+                case "es":
+                    return "Esta no es la ROM compatible.\n\nSe necesita " + label + " (SHA-1 " + expected
+                            + "); este archivo tiene el SHA-1 " + actual + ".";
                 case "it":
                     return "Questa non è la ROM supportata.\n\nServe " + label + " (SHA-1 " + expected
                             + "); questo file ha lo SHA-1 " + actual + ".";
@@ -145,6 +155,8 @@ final class Setup {
                     return name + " n'est pas encore prise en charge.\n\nROM prises en charge :\n" + roms;
                 case "de":
                     return name + " wird noch nicht unterstützt.\n\nUnterstützte ROMs:\n" + roms;
+                case "es":
+                    return name + " aún no es compatible.\n\nROM compatibles:\n" + roms;
                 case "it":
                     return name + " non è ancora supportata.\n\nROM supportate:\n" + roms;
                 default:
@@ -161,6 +173,9 @@ final class Setup {
                 case "de":
                     return "Diese Datei ist keine unterstützte ROM von Pokémon Smaragd (SHA-1 " + actual
                             + ").\n\nUnterstützte ROMs:\n" + roms;
+                case "es":
+                    return "Este archivo no es una ROM de Pokémon Esmeralda compatible (SHA-1 " + actual
+                            + ").\n\nROM compatibles:\n" + roms;
                 case "it":
                     return "Questo file non è una ROM di Pokémon Smeraldo supportata (SHA-1 " + actual
                             + ").\n\nROM supportate:\n" + roms;
@@ -189,6 +204,15 @@ final class Setup {
                         case "Extracting the game data": return "Spieldaten werden extrahiert";
                         case "Checking the data pack": return "Datenpaket wird geprüft";
                         case "Done": return "Fertig";
+                    }
+                    break;
+                case "es":
+                    switch (message) {
+                        case "Checking the ROM": return "Comprobando la ROM";
+                        case "Building the 3D world": return "Construyendo el mundo 3D";
+                        case "Extracting the game data": return "Extrayendo los datos del juego";
+                        case "Checking the data pack": return "Comprobando el paquete de datos";
+                        case "Done": return "Listo";
                     }
                     break;
                 case "it":

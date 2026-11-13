@@ -88,11 +88,15 @@ Only a clean, unmodified dump is accepted:
 | Language | Cartridge | Game code |
 | :--- | :--- | :--- |
 | English | Pokémon Emerald Version (USA, Europe) | BPEE |
+| French | Pokémon Version Émeraude (France) | BPEF |
+| Italian | Pokémon Versione Smeraldo (Italia) | BPEI |
+| German | Pokémon Smaragd-Edition (Deutschland) | BPED |
+| Spanish | Pokémon Edición Esmeralda (España) | BPES |
 
-Emerald 3DS also supports Spanish, French, Italian, German, Japanese and a
-Brazilian Portuguese translation. The Android port builds one APK per
-cartridge language the same way; the French variant is built with
-[`--locale fr`](docs/ANDROID-LANGUAGES.md), and the others use the same path.
+One app plays all of them: it recognizes the cartridge from your ROM and
+keeps each language's save apart ([languages](docs/ANDROID-LANGUAGES.md)).
+Emerald 3DS also supports Japanese and a Brazilian Portuguese translation,
+which the Android port does not carry yet.
 ROM hacks are not supported.
 
 ## Features
@@ -191,7 +195,7 @@ android_port/tools/dev_rom.sh ROM.gba      # play a ROM in it (any supported lan
 ```
 
 One APK carries every supported cartridge language (English, French,
-Italian, German): the app reads the player's ROM, recognizes its language and
+Italian, German, Spanish): the app reads the player's ROM, recognizes its language and
 builds that language's game data from it, each language with its own save
 and settings ([languages](docs/ANDROID-LANGUAGES.md)).
 

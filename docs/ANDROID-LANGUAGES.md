@@ -13,14 +13,13 @@ touches the other's save. No game data is distributed.
 | French | Pokémon Émeraude (France) | BPEF | yes |
 | Italian | Pokémon Smeraldo (Italia) | BPEI | yes |
 | German | Pokémon Smaragd (Deutschland) | BPED | yes |
-| Spanish | Pokémon Esmeralda (España) | BPES | not yet |
+| Spanish | Pokémon Esmeralda (España) | BPES | yes |
 | Japanese | ポケモンエメラルド (日本) | BPEJ | not yet |
 
 The checksums and the localization each language needs are the ones Emerald
 3DS uses: [FRENCH.md](FRENCH.md), [ITALIAN.md](ITALIAN.md),
 [GERMAN.md](GERMAN.md), [SPANISH.md](SPANISH.md), [JAPANESE.md](JAPANESE.md).
-A Spanish or Japanese ROM is recognized and the app says it is not supported
-yet.
+A Japanese ROM is recognized and the app says it is not supported yet.
 
 ## How it works
 
@@ -52,7 +51,7 @@ android_port/tools/build.sh --release        # the release APK, audited against 
 ```
 
 The clean ROMs are found by SHA-1 in `--roms DIR` (default
-`~/Documents/gba_roms`). `LANGS=en,fr` builds only those languages; a
+`~/Documents/gba_roms`). `LANGS=en,es` builds only those languages; a
 development build leaves out a language whose ROM is missing, a release
 needs them all. English builds in the development tree, `build/upstream`;
 each other language is staged once in `build/release-<code>` (the tree the
