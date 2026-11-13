@@ -45,13 +45,15 @@ pinned interpreter and Pillow (`build/venv`), `VOXEL_LOCAL=1` runs it directly.
 
 ## Status
 
-The French and Italian variants build, and each recipe rebuilds its data pack
-byte for byte with the app's Java builder (`PackBuilder`) and with the desktop
-builder (6,394 files, ABI `770cc65b` for French and `a6ddd39a` for Italian).
+The French, Italian and German variants build, and each recipe rebuilds its
+data pack byte for byte with the app's Java builder (`PackBuilder`) and with
+the desktop builder (6,394 files for French and Italian, 6,393 for German;
+ABI `770cc65b`, `a6ddd39a` and `dee20f98`).
 
-Both have also run on the Android emulator (Android 13, with a second display
-simulated through `overlay_display_devices`): the setup screen, the title
-screens, the intro text, the in-game map and the bottom touch UI render in the
-right language, and the pack is rebuilt from the cartridge on first boot.
+All three have also run on the Android emulator (Android 13, with a second
+display simulated through `overlay_display_devices`): the setup screen, the
+title screens, the intro text, the in-game map and the bottom touch UI render
+in the right language, and the pack is rebuilt from the cartridge on first
+boot.
 What is left is the Thor itself: the bottom screen's exact geometry, touch
 input, audio and performance still need that hardware.
