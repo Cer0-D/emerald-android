@@ -2,10 +2,8 @@
 
 Emerald for Android is one app for every supported cartridge language. The
 player picks their own ROM; the app recognizes which cartridge it is by its
-SHA-1, builds that language's game data from it and plays it. Each language
-keeps its own save, settings, data pack and follower files, so picking
-another language's ROM later starts that language's own game and never
-touches the other's save. No game data is distributed.
+SHA-1, builds that language's game data from it and plays it. There is no
+way to switch languages in the app yet. No game data is distributed.
 
 | Language | ROM | Game code | In the app |
 |---|---|---|---|
@@ -37,11 +35,13 @@ assets/lang/<code>/builder/              recipe.json, literals.bin, abi.txt, rom
 
 On the device each language plays from its own root, `<files>/<code>/`
 (engine files, and `sdmc/`: data pack, save, settings, follower files);
-`<files>/language.txt` names the language played last, which starts at once
-while its data pack matches this build. The app asks for a ROM again only when
-it has to build a pack (first start, or an update that changed that
-language's data); the ROM picked then decides the language. An update from the
-one-language app (0.5.0.1) moves its files into `<files>/en/`.
+`<files>/language.txt` names the language played, which starts at once while
+its data pack matches this build. The app asks for a ROM only when it has to
+build a pack (first start, or an update that changed the data); the ROM picked
+decides the language. Keeping each language's files apart means a ROM of
+another language picked at that point cannot overwrite a save made with a
+different cartridge. An update from the one-language app (0.5.0.1) moves its
+files into `<files>/en/`.
 
 ## Building
 
