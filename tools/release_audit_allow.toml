@@ -31,19 +31,20 @@ paths = [
     "Emerald3DS-v*-Windows/payload/*/emerald3ds.recipe",
     "payload/emerald3ds.recipe",
     "payload/*/emerald3ds.recipe",
-    # The Android APK (android_port/tools/release.sh). Its native library is
-    # the port's code: the game's read-only data is reserved NOLOAD and comes
-    # from the data pack (android_port/emerald_android.ld), as on the 3DS.
-    # Still scanned for the ROM's bytes like every file.
-    "lib/armeabi-v7a/libemerald.so",
-    "lib/arm64-v8a/libemerald.so",
-    # The recipe the app builds the data pack from, unpacked from the release's
+    # The Android APK (android_port/tools/build.sh --release), one set per
+    # cartridge language. Its native libraries are the port's code: the
+    # game's read-only data is reserved NOLOAD and comes from the data pack
+    # (android_port/emerald_android.ld), as on the 3DS. Still scanned for the
+    # ROM's bytes like every file.
+    "lib/armeabi-v7a/libemerald_*.so",
+    "lib/arm64-v8a/libemerald_*.so",
+    # The recipe each language's data pack is built from, unpacked from its
     # .recipe (android_port/tools/export_recipe.py): ROM offsets and the
     # literal pool, the precompiled voxel programs included.
-    "assets/builder/recipe.json",
-    "assets/builder/literals.bin",
+    "assets/lang/*/builder/recipe.json",
+    "assets/lang/*/builder/literals.bin",
     # The bottom screen's battle art: the port's own (gen_battle_art.py).
-    "assets/engine/bottom/battle.bin",
+    "assets/lang/*/engine/bottom/battle.bin",
 ]
 
 [media]
