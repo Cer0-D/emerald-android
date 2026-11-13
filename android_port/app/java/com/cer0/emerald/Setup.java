@@ -127,6 +127,13 @@ final class Setup {
                                     + "la ROM n'est que lue, jamais copiée ni envoyée.",
                             "Choisir la ROM", "Lecture de la ROM", "Lecture de la recette",
                             "Les données du jeu n'ont pas pu être construites : ");
+                case "de":
+                    return new Texts("de", "Smaragd für Android",
+                            "Um zu spielen, wähle deine eigene ROM " + rom + ".\n"
+                                    + "Die Spieldaten werden daraus auf diesem Gerät erzeugt; "
+                                    + "die ROM wird nur gelesen, nie kopiert oder gesendet.",
+                            "ROM wählen", "ROM wird gelesen", "Rezept wird gelesen",
+                            "Die Spieldaten konnten nicht erzeugt werden: ");
                 case "it":
                     return new Texts("it", "Smeraldo per Android",
                             "Per giocare, scegli la tua ROM " + rom + ".\n"
@@ -149,6 +156,9 @@ final class Setup {
                 case "fr":
                     return "Ce n'est pas la ROM prise en charge.\n\nIl faut " + label + " (SHA-1 "
                             + expected + ") ; ce fichier a le SHA-1 " + actual + ".";
+                case "de":
+                    return "Dies ist nicht die unterstützte ROM.\n\nBenötigt wird " + label
+                            + " (SHA-1 " + expected + "); diese Datei hat den SHA-1 " + actual + ".";
                 case "it":
                     return "Questa non è la ROM supportata.\n\nServe " + label + " (SHA-1 " + expected
                             + "); questo file ha lo SHA-1 " + actual + ".";
@@ -168,6 +178,15 @@ final class Setup {
                         case "Extracting the game data": return "Extraction des données du jeu";
                         case "Checking the data pack": return "Vérification du pack de données";
                         case "Done": return "Terminé";
+                    }
+                    break;
+                case "de":
+                    switch (message) {
+                        case "Checking the ROM": return "ROM wird geprüft";
+                        case "Building the 3D world": return "3D-Welt wird aufgebaut";
+                        case "Extracting the game data": return "Spieldaten werden extrahiert";
+                        case "Checking the data pack": return "Datenpaket wird geprüft";
+                        case "Done": return "Fertig";
                     }
                     break;
                 case "it":
