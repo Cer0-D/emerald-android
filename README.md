@@ -90,8 +90,10 @@ Only a clean, unmodified dump is accepted:
 | English | Pokémon Emerald Version (USA, Europe) | BPEE |
 
 Emerald 3DS also supports Spanish, French, Italian, German, Japanese and a
-Brazilian Portuguese translation; those are not available in the Android
-version yet. ROM hacks are not supported.
+Brazilian Portuguese translation. The Android port builds one APK per
+cartridge language the same way; the French variant is built with
+[`--locale fr`](docs/ANDROID-LANGUAGES.md), and the others use the same path.
+ROM hacks are not supported.
 
 ## Features
 
@@ -154,8 +156,8 @@ What works and what does not yet, compared with Emerald 3DS:
 | Sound and music | Working |
 | Fast-forward | Working |
 | Day/night lighting | Working |
-| Building the game data in the app | Working (English cartridge) |
-| Other languages (ES, FR, IT, DE, JA, PT-BR) | Not ported yet |
+| Building the game data in the app | Working (English; French pipeline validated, device testing pending) |
+| Other languages (ES, FR, IT, DE, JA, PT-BR) | Buildable with `--locale` (docs/ANDROID-LANGUAGES.md); French's data pipeline is validated, device play testing pending |
 | Follower Pokémon (HeartGold/SoulSilver sprites) | Not ported yet: the app does not download them |
 | Local wireless play (Bluetooth) | Working: link rooms. Trades, battles and minigames not fully tested |
 | Single-screen devices | Not supported yet (planned) |

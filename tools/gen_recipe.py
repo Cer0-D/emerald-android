@@ -241,6 +241,11 @@ def gamedata_remaps(nm_tool: str, elf3: Path, elfgba: Path, rom: bytes, data: by
         off = a - start
         if not (0 <= off < len(data)) or size < 2 or not 0x08000000 <= ga < 0x09000000:
             continue
+        # A locale's symbol table records an address but not always a size: a
+        # record layout cannot be read from zero bytes, and a table that runs
+        # past the ROM has no source either.
+        if gsize < 2 or ga - 0x08000000 + gsize > len(rom):
+            continue
         if size < 16:
             small.append((off, size, ga, gsize))
             continue

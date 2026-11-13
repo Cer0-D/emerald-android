@@ -44,6 +44,8 @@ final class Setup {
     private Button mButton;
     private ProgressBar mBar;
     private boolean mBusy;
+    private String mRomLabel;
+    private Texts mTexts;
 
     Setup(MainActivity activity) { mActivity = activity; }
 
@@ -81,6 +83,76 @@ final class Setup {
             int n;
             while ((n = s.read(buf)) > 0) out.write(buf, 0, n);
             return out.toByteArray();
+        }
+    }
+
+    /*
+     * The cartridge this build was made for (assets/builder/rom.txt, written by
+     * tools/release.sh): the language code, then the name the setup screen
+     * shows. A development install has no file and keeps the English wording.
+     */
+    static String[] romInfo(Context c) {
+        try {
+            String[] lines = readAsset(c.getAssets(), "builder/rom.txt").split("\\R", 2);
+            if (lines.length == 2 && !lines[0].trim().isEmpty() && !lines[1].trim().isEmpty())
+                return new String[]{lines[0].trim(), lines[1].trim()};
+        } catch (IOException e) {
+            // no rom.txt: the development tree's English ROM
+        }
+        return new String[]{"en", "Pokémon Emerald (USA, Europe)"};
+    }
+
+    /* The setup screen's own words: English, or French for a French build. */
+    static final class Texts {
+        final boolean french;
+        final String title, message, choose, readingRom, readingRecipe, failed;
+
+        Texts(boolean french, String title, String message, String choose, String readingRom,
+              String readingRecipe, String failed) {
+            this.french = french;
+            this.title = title;
+            this.message = message;
+            this.choose = choose;
+            this.readingRom = readingRom;
+            this.readingRecipe = readingRecipe;
+            this.failed = failed;
+        }
+
+        static Texts of(String locale, String rom) {
+            if ("fr".equals(locale))
+                return new Texts(true, "Émeraude pour Android",
+                        "Pour jouer, choisissez votre propre ROM " + rom + ".\n"
+                                + "Les données du jeu sont construites à partir d'elle sur cet appareil ; "
+                                + "la ROM n'est que lue, jamais copiée ni envoyée.",
+                        "Choisir la ROM", "Lecture de la ROM", "Lecture de la recette",
+                        "Les données du jeu n'ont pas pu être construites : ");
+            return new Texts(false, "Emerald for Android",
+                    "To play, choose your own " + rom + ".\n"
+                            + "The game's data is built from it on this device; the ROM is only read, "
+                            + "never copied or sent anywhere.",
+                    "Choose ROM", "Reading the ROM", "Reading the recipe",
+                    "The game data could not be built: ");
+        }
+
+        String notRom(String label, String expected, String actual) {
+            if (french)
+                return "Ce n'est pas la ROM prise en charge.\n\nIl faut " + label + " (SHA-1 " + expected
+                        + ") ; ce fichier a le SHA-1 " + actual + ".";
+            return "This is not the supported ROM.\n\n" + label + " is needed (SHA-1 " + expected
+                    + "); this file's SHA-1 is " + actual + ".";
+        }
+
+        /* PackBuilder's progress lines, in the setup screen's language. */
+        String step(String message) {
+            if (!french) return message;
+            switch (message) {
+                case "Checking the ROM": return "Vérification de la ROM";
+                case "Building the 3D world": return "Construction du monde 3D";
+                case "Extracting the game data": return "Extraction des données du jeu";
+                case "Checking the data pack": return "Vérification du pack de données";
+                case "Done": return "Terminé";
+                default: return message;
+            }
         }
     }
 
@@ -129,6 +201,9 @@ final class Setup {
     // ── The screen ───────────────────────────────────────────────────────
 
     void show() {
+        String[] rom = romInfo(mActivity);
+        mRomLabel = rom[1];
+        mTexts = Texts.of(rom[0], mRomLabel);
         LinearLayout root = new LinearLayout(mActivity);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setGravity(Gravity.CENTER);
@@ -136,7 +211,7 @@ final class Setup {
         root.setPadding(96, 48, 96, 48);
 
         TextView title = new TextView(mActivity);
-        title.setText("Emerald for Android");
+        title.setText(mTexts.title);
         title.setTextColor(Color.rgb(120, 220, 160));
         title.setTextSize(30);
         title.setTypeface(Typeface.DEFAULT_BOLD);
@@ -144,8 +219,7 @@ final class Setup {
         root.addView(title);
 
         mMessage = new TextView(mActivity);
-        mMessage.setText("To play, choose your own Pokémon Emerald (USA, Europe) ROM.\n"
-                + "The game's data is built from it on this device; the ROM is only read, never copied or sent anywhere.");
+        mMessage.setText(mTexts.message);
         mMessage.setTextColor(Color.WHITE);
         mMessage.setTextSize(18);
         mMessage.setGravity(Gravity.CENTER);
@@ -153,7 +227,7 @@ final class Setup {
         root.addView(mMessage);
 
         mButton = new Button(mActivity);
-        mButton.setText("Choose ROM");
+        mButton.setText(mTexts.choose);
         mButton.setTextSize(20);
         mButton.setOnClickListener(v -> pickRom());
         root.addView(mButton, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -193,38 +267,47 @@ final class Setup {
         mButton.setEnabled(false);
         mBar.setVisibility(View.VISIBLE);
         mBar.setProgress(0);
-        mStatus.setText("Reading the ROM");
+        mStatus.setText(mTexts.readingRom);
         new Thread(() -> build(uri), "pack-builder").start();
     }
 
     private void build(Uri uri) {
         long start = System.currentTimeMillis();
+        PackBuilder builder = null;
         try {
             byte[] rom = readAll(mActivity.getContentResolver().openInputStream(uri));
-            post(0.0f, "Reading the recipe");
+            post(0.0f, mTexts.readingRecipe);
             AssetManager am = mActivity.getAssets();
-            PackBuilder builder = new PackBuilder(readAsset(am, "builder/recipe.json"),
+            builder = new PackBuilder(readAsset(am, "builder/recipe.json"),
                     readAll(am.open("builder/literals.bin")));
             builder.build(rom, packFile(mActivity), this::post);
             Log.i(TAG, "data pack built in " + (System.currentTimeMillis() - start) + " ms (" + builder.release() + ")");
             mMain.post(() -> mActivity.startGame(ENGINE_DIR));
         } catch (Throwable e) {
             Log.e(TAG, "data pack", e);
-            String text = e instanceof PackBuilder.BuildException ? e.getMessage()
-                    : "The game data could not be built: " + e;
+            String text;
+            if (e instanceof PackBuilder.WrongRom)
+                text = mTexts.notRom(mRomLabel, builder == null ? "?" : builder.romSha1(),
+                        ((PackBuilder.WrongRom) e).sha1);
+            else if (e instanceof PackBuilder.BuildException)
+                text = e.getMessage();
+            else
+                text = mTexts.failed + e;
+            final String shown = text;
             mMain.post(() -> {
                 mBusy = false;
                 mButton.setEnabled(true);
                 mBar.setVisibility(View.GONE);
-                mStatus.setText(text);
+                mStatus.setText(shown);
             });
         }
     }
 
     private void post(float fraction, String message) {
+        final String shown = mTexts.step(message);
         mMain.post(() -> {
             mBar.setProgress((int) (fraction * 1000));
-            mStatus.setText(message);
+            mStatus.setText(shown);
         });
     }
 }
