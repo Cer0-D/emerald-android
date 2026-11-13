@@ -51,6 +51,9 @@ void CtrInput_Scan(void)
         AndroidVideo_BottomViewport(host.touchW, host.touchH, &vx, &vy, &vw, &vh);
         float px = (host.touchX - vx) * CTR_BOTTOM_WIDTH / (float)vw;
         float py = (host.touchY - vy) * CTR_BOTTOM_HEIGHT / (float)vh;
+        /* A whole-screen game picture is drawn scaled up: the tap at its
+         * pixel's place in the window, where the bottom screen reads it. */
+        AndroidVideo_WholeTouch(&px, &py);
         if (px >= 0 && py >= 0 && px < CTR_BOTTOM_WIDTH && py < CTR_BOTTOM_HEIGHT)
         {
             sample.touchActive = true;

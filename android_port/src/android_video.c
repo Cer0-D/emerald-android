@@ -589,6 +589,9 @@ static int16_t sOamAnchor[128];
 /* The game's tags on OAM entries (3ds_video.h), as 3ds_video.c keeps them. */
 static uint32_t sVoxelWeatherOam[4], sVoxelCloudOam[4];
 static uint32_t sScreenOam[4], sFogOam[4], sLatticeOam[4], sParticleOam[4];
+/* Screen sprites placed round the player rather than in a window: the
+ * healing machine's, Fly's bird (3ds_video.c PlaceScreenObject). */
+static uint32_t sMachineOam[4], sFlyOam[4];
 
 static inline bool Tagged(const uint32_t *marks, unsigned i) { return (marks[i >> 5] >> (i & 31)) & 1; }
 
@@ -699,6 +702,12 @@ static void ObjLine(int line, int width, int height)
              * its sprite's true y (sprite.c's anchors), as 3ds_video.c does. */
             if (x >= width)
                 x -= 512;
+            /* A sprite of a window (the item the PC shows, the mon shown for
+             * a move) sits where its window does: the text layer is moved
+             * right by FIELD_UI_SHIFT (3ds_video.c PlaceScreenObject). */
+            if (sFieldUi && Tagged(sScreenOam, (unsigned)n) && !Tagged(sMachineOam, (unsigned)n)
+                && !Tagged(sFlyOam, (unsigned)n))
+                x += FIELD_UI_SHIFT;
             if (sOamAnchored[n >> 5] & (1u << (n & 31)))
                 y = OamUnwrapY((unsigned)n, y);
             else if (y >= height)
@@ -1070,6 +1079,153 @@ static float WindowCover(int x, int y)
 }
 
 /* The GBA picture into the bottom screen's window. */
+/*
+ * The game screens 3ds_video.c draws over the whole bottom screen
+ * (BottomWhole): the PC's boxes, a summary opened from them, the shop, the
+ * trades, the bag and the party menu with the whole screen, a caught
+ * Pokemon's Pokedex page. 3ds_bottom_ui.c holds the top screen's frame
+ * meanwhile (MODE_STORAGE) and sends taps into the picture; without them
+ * drawn, the PC showed nothing and the top screen stayed frozen.
+ */
+static bool BottomWholeScreen(unsigned screen)
+{
+    return screen == CTR_CENTRED_STORAGE || screen == CTR_CENTRED_SUMMARY || screen == CTR_CENTRED_BAG_WHOLE
+        || screen == CTR_CENTRED_PARTY_WHOLE || screen == CTR_CENTRED_SHOP || screen == CTR_CENTRED_TRADE_MENU
+        || screen == CTR_CENTRED_TRADE || screen == CTR_CENTRED_POKEDEX_CAUGHT;
+}
+static unsigned BottomWholeLayers(void);
+
+/* A text background's colour at GBA pixel (gx, gy), its map wrapping as the
+ * GBA wraps it; false where it is transparent. */
+static bool BgTexel(unsigned bg, int gx, int gy, uint16_t *colour)
+{
+    uint16_t cnt = Reg(0x08 + 2 * bg);
+    unsigned charBase = ((cnt >> 2) & 3) * 0x4000, screenBase = ((cnt >> 8) & 31) * 0x800;
+    bool bpp8 = (cnt >> 7) & 1;
+    unsigned size = (cnt >> 14) & 3, mapW = (size & 1) ? 512 : 256, mapH = (size & 2) ? 512 : 256;
+    unsigned sx = (unsigned)(gx + (int)(Reg(0x10 + 4 * bg) & 0x1FF)) & (mapW - 1);
+    unsigned sy = (unsigned)(gy + (int)(Reg(0x12 + 4 * bg) & 0x1FF)) & (mapH - 1);
+    unsigned tx = sx >> 3, ty = sy >> 3, block = (tx >> 5) + (ty >> 5) * (mapW >> 8);
+    unsigned entryAt = screenBase + block * 0x800 + (((ty & 31) << 5) + (tx & 31)) * 2;
+    unsigned e, px, py, at, idx;
+
+    if (entryAt + 1 >= 0x10000)
+        return false;
+    e = sMem.vram[entryAt] | (sMem.vram[entryAt + 1] << 8);
+    px = (e & 0x400) ? 7 - (sx & 7) : sx & 7;
+    py = (e & 0x800) ? 7 - (sy & 7) : sy & 7;
+    if (bpp8)
+    {
+        at = charBase + (e & 0x3FF) * 64 + py * 8 + px;
+        if (at >= 0x10000 || !(idx = sMem.vram[at]))
+            return false;
+        *colour = Pal(idx);
+        return true;
+    }
+    at = charBase + (e & 0x3FF) * 32 + py * 4 + px / 2;
+    if (at >= 0x10000 || !(idx = (sMem.vram[at] >> ((px & 1) * 4)) & 15))
+        return false;
+    *colour = Pal((e >> 12) * 16 + idx);
+    return true;
+}
+
+/* Around a whole-screen picture: the screen's back layers carried on past
+ * it (3ds_video.c WindowCompose: its centred fill's layers, else BG3), over
+ * the backdrop, under the screen's brightness fade; no sprites. */
+static uint16_t BottomMargin(int gx, int gy, unsigned layers)
+{
+    uint16_t dispcnt = Reg(0), bldcnt = Reg(0x50), c = Pal(0);
+    unsigned first = 5, best = 4, mode = (bldcnt >> 6) & 3, evy = Reg(0x54) & 31;
+
+    if ((dispcnt & 7) == 0)
+        for (unsigned bg = 0; bg < 4; ++bg)
+        {
+            uint16_t texel;
+            unsigned prio = Reg(0x08 + 2 * bg) & 3;
+
+            if (!((layers >> bg) & 1) || !((dispcnt >> (8 + bg)) & 1) || prio >= best)
+                continue;
+            if (BgTexel(bg, gx, gy, &texel))
+            {
+                c = texel;
+                best = prio;
+                first = bg;
+            }
+        }
+    if (evy > 16)
+        evy = 16;
+    if ((bldcnt >> first) & 1)
+    {
+        if (mode == 2)
+            c = Brighten(c, evy);
+        else if (mode == 3)
+            c = Darken(c, evy);
+    }
+    return c;
+}
+
+static inline uint16_t To565(uint32_t c)
+{
+    return (uint16_t)((((c & 0xFF) >> 3) << 11) | ((((c >> 8) & 0xFF) >> 2) << 5) | (((c >> 16) & 0xFF) >> 3));
+}
+
+/*
+ * A whole-screen picture on the Thor's bottom screen: as large as it fits
+ * without cutting it - the canvas's width (x4/3 of the GBA's, the bottom
+ * screen ~3.9x the canvas), centred in its height - drawn over the canvas
+ * at the screen's own pixels (DrawScreen, sWholeTex); the canvas holds the
+ * margins round it, at the same scale, so their pattern meets the picture's.
+ */
+#define WHOLE_SCALE (((float)CTR_BOTTOM_WIDTH / GBA_W) < ((float)CTR_BOTTOM_HEIGHT / GBA_H) \
+                     ? (float)CTR_BOTTOM_WIDTH / GBA_W : (float)CTR_BOTTOM_HEIGHT / GBA_H)
+#define WHOLE_X0 ((CTR_BOTTOM_WIDTH - GBA_W * WHOLE_SCALE) * 0.5f)
+#define WHOLE_Y0 ((CTR_BOTTOM_HEIGHT - GBA_H * WHOLE_SCALE) * 0.5f)
+static bool sWholeShown;
+
+/* A tap on the canvas at (*x, *y), on a whole-screen picture: carried to
+ * where 3ds_bottom_ui.c reads the picture's pixels from, the window's place
+ * at 1:1 (CTR_BOTTOM_WIN_X, CTR_BOTTOM_WIN_SCREEN_Y). */
+void AndroidVideo_WholeTouch(float *x, float *y)
+{
+    if (!sWholeShown)
+        return;
+    *x = CTR_BOTTOM_WIN_X + (*x - WHOLE_X0) / WHOLE_SCALE;
+    *y = CTR_BOTTOM_WIN_SCREEN_Y + (*y - WHOLE_Y0) / WHOLE_SCALE;
+}
+
+static void RenderBottomWhole(void)
+{
+    unsigned layers = BottomWholeLayers();
+
+    sOut = sBottomPicture;
+    RenderPicture(GBA_W, GBA_H, 0, 0);
+    sOut = sTop;
+    for (int cx = 0; cx < CTR_BOTTOM_WIDTH; cx++)
+    {
+        uint16_t *column = sBottom + (size_t)cx * CTR_BOTTOM_HEIGHT;
+        int gx = (int)floorf((cx + 0.5f - WHOLE_X0) / WHOLE_SCALE);
+
+        for (int cy = 0; cy < CTR_BOTTOM_HEIGHT; cy++)
+        {
+            int gy = (int)floorf((cy + 0.5f - WHOLE_Y0) / WHOLE_SCALE);
+            uint16_t c;
+
+            if (gx >= 0 && gx < GBA_W && gy >= 0 && gy < GBA_H)
+            {
+                uint32_t p = sBottomPicture[(size_t)gy * TOP_W + gx];
+                c = To565(p);
+            }
+            else
+            {
+                uint16_t m = BottomMargin(gx, gy, layers);
+                c = (uint16_t)(((m & 31) << 11) | (((m >> 5) & 31) << 6) | ((m >> 10) & 31));
+            }
+            column[CTR_BOTTOM_HEIGHT - 1 - cy] = c;
+        }
+    }
+    sBottomDirty = true;
+}
+
 static void RenderBottomWindow(void)
 {
     /* The frame's rim, light at its top and darker at its foot (its 164 rows). */
@@ -1323,17 +1479,22 @@ static bool BottomWindowScreen(unsigned screen)
                              || screen == CTR_CENTRED_PARTY);
 }
 void CtrVideo_BottomStrips(const uint16_t *canvas) { (void)canvas; }
-bool CtrVideo_BottomWhole(void) { return false; }
+bool CtrVideo_BottomWhole(void) { return sBottomInUse && !sBottomNative && BottomWholeScreen(sCentred); }
 /* A touch's row in the window's picture, -1 off it (as 3ds_video.c). */
 int CtrVideo_BottomPictureY(int y)
 {
     y -= CTR_BOTTOM_WIN_SCREEN_Y;
     return y >= 0 && y < GBA_H ? y : -1;
 }
-void CtrVideo_ClearScreenOam(void) { memset(sScreenOam, 0, sizeof(sScreenOam)); }
+void CtrVideo_ClearScreenOam(void)
+{
+    memset(sScreenOam, 0, sizeof(sScreenOam));
+    memset(sMachineOam, 0, sizeof(sMachineOam));
+    memset(sFlyOam, 0, sizeof(sFlyOam));
+}
 void CtrVideo_MarkScreenOam(unsigned first, unsigned end) { Mark(sScreenOam, first, end); }
-void CtrVideo_MarkMachineOam(unsigned first, unsigned end) { (void)first; (void)end; }
-void CtrVideo_MarkFlyOam(unsigned first, unsigned end) { (void)first; (void)end; }
+void CtrVideo_MarkMachineOam(unsigned first, unsigned end) { Mark(sMachineOam, first, end); }
+void CtrVideo_MarkFlyOam(unsigned first, unsigned end) { Mark(sFlyOam, first, end); }
 const CtrVideoStats *CtrVideo_GetStats(void) { return &sStats; }
 unsigned char CtrBattle_Sandstorm(void) { return 0; }
 
@@ -1386,6 +1547,8 @@ static EGLSurface sSurf[HOST_SCREENS] = { EGL_NO_SURFACE, EGL_NO_SURFACE };
 static ANativeWindow *sWin[HOST_SCREENS];
 static uint32_t sWinGen[HOST_SCREENS];
 static GLuint sProgram, sTopTex, sBottomTex, sVao;
+/* A whole-screen game picture over the bottom canvas (RenderBottomWhole). */
+static GLuint sWholeTex;
 static GLint sURect, sURotate, sUTex;
 static struct timespec sNextFrame;
 
@@ -1684,6 +1847,18 @@ static void DrawScreen(int screen, GLuint tex, int pw, int ph, int rotate)
     glUniform4f(sURect, 2.0f * x / w - 1.0f, 1.0f - 2.0f * (y + vh) / h,
                 2.0f * (x + vw) / w - 1.0f, 1.0f - 2.0f * y / h);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    if (screen == HOST_SCREEN_BOTTOM && sWholeShown && sWholeTex)
+    {
+        float k = (float)vw / CTR_BOTTOM_WIDTH;
+        float px0 = x + WHOLE_X0 * k, py0 = y + WHOLE_Y0 * k;
+        float px1 = px0 + GBA_W * WHOLE_SCALE * k, py1 = py0 + GBA_H * WHOLE_SCALE * k;
+
+        glBindTexture(GL_TEXTURE_2D, sWholeTex);
+        glUniform1i(sURotate, 0);
+        glUniform4f(sURect, 2.0f * px0 / w - 1.0f, 1.0f - 2.0f * py1 / h,
+                    2.0f * px1 / w - 1.0f, 1.0f - 2.0f * py0 / h);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
 #if CTR_SHOW_FPS
     if (screen == HOST_SCREEN_TOP && CtrSettings_ShowFps())
         DrawFps(w, h, (float)x, (float)y, (float)vh / (float)ph);
@@ -3145,6 +3320,18 @@ static uint8_t StageBackmost(void)
     return best < 4 ? (uint8_t)(1u << best) : 0;
 }
 
+/* A whole-screen bottom picture's margin layers (RenderBottomWhole). */
+static unsigned BottomWholeLayers(void)
+{
+    const StageFill *fill = sCentred < CTR_CENTRED_SCREENS ? &sStageFills[sCentred] : NULL;
+
+    if (fill && fill->layers)
+        return fill->layers;
+    if (fill && fill->backmost && StageBackmost())
+        return StageBackmost();
+    return 1u << 3;
+}
+
 /* The Game Corner's backdrop at view pixel (x, y) of a stage render: the
  * pattern repeated from the view's corner. The felt under the whole
  * roulette; the wall beside the slot machine, the machine in the picture. */
@@ -3508,9 +3695,16 @@ void CtrVideo_Present(void)
         eglMakeCurrent(sDpy, sSurf[0], sSurf[0], sCtx);
     else if (sSurf[1] != EGL_NO_SURFACE)
         eglMakeCurrent(sDpy, sSurf[1], sSurf[1], sCtx);
-    sBottomInUse = sMem.regs && !sStage && BottomWindowScreen(sCentred);
+    sBottomInUse = sMem.regs && !sStage
+                && (BottomWindowScreen(sCentred) || (!sBottomNative && BottomWholeScreen(sCentred)));
+    sWholeShown = sBottomInUse && BottomWholeScreen(sCentred);
     if (sBottomInUse)
-        RenderBottomWindow();
+    {
+        if (sWholeShown)
+            RenderBottomWhole();
+        else
+            RenderBottomWindow();
+    }
     /* The top screen keeps what it showed while the game's screen is below. */
     bool holdTop = sHoldTop || sBottomInUse;
     if (!holdTop && sMem.regs)
@@ -3635,6 +3829,16 @@ void CtrVideo_Present(void)
             glBindTexture(GL_TEXTURE_2D, sTopTex);
             glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
             glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, TOP_W, TOP_H, GL_RGBA, GL_UNSIGNED_BYTE, sTop);
+        }
+        if (sWholeShown)
+        {
+            if (!sWholeTex)
+                sWholeTex = Texture(GBA_W, GBA_H, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
+            glBindTexture(GL_TEXTURE_2D, sWholeTex);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, TOP_W);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, GBA_W, GBA_H, GL_RGBA, GL_UNSIGNED_BYTE, sBottomPicture);
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
         }
         if (sBottomDirty)
         {

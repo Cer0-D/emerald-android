@@ -59,6 +59,7 @@ void AndroidHost_GetInput(AndroidHostInput *out);
 
 /* Where the 320x240 bottom picture sits in a w x h bottom view (android_video.c). */
 void AndroidVideo_BottomViewport(int w, int h, int *x, int *y, int *vw, int *vh);
+void AndroidVideo_WholeTouch(float *x, float *y);
 
 /* The fatal message to show, or NULL (android_log.c). */
 const char *AndroidLog_FatalReason(void);
