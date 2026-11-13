@@ -596,6 +596,14 @@ static inline bool Tagged(const uint32_t *marks, unsigned i) { return (marks[i >
  * their sprites' tiles are left out of the battle's picture. */
 static const CtrHudBox *sHud;
 static int8_t sHudOamBox[128];
+/* Where each box's picture lies over the scene, in GBA pixels, and its
+ * sprites' priority (HudFrame): the scene's render marks sHudCoveredNow when
+ * a background drawn in front of a box, or a window hiding the sprites, falls
+ * in one (3ds_video.c HudCoverUpdate, HudWindowsShow); the next frame then
+ * shows the game's own box, as the 3DS does. */
+static int sHudRect[CTR_HUD_BOXES][5];
+static unsigned sHudRects;
+static bool sHudCovered, sHudCoveredNow;
 
 /* The overlay's class of OAM entry `i`, or -1 when the world draws it or it
  * is a card in the scene (3ds_video.c DrawObjects, sVoxelObjPass). */
@@ -887,6 +895,31 @@ static uint32_t OverlayPixel(int x, unsigned enable, bool bg0, bool objOn, uint1
     return out;
 }
 
+/* A scene pixel at GBA (gx, gy), column x of this line: whether it hides a
+ * box's picture - the windows keep the sprites out of it, or a background
+ * in front of the box drew there. */
+static void HudCoverPixel(int gx, int gy, int x, unsigned enable, const bool *bgOn)
+{
+    for (unsigned r = 0; r < sHudRects; ++r)
+    {
+        const int *rect = sHudRect[r];
+
+        if (gx < rect[0] || gx >= rect[2] || gy < rect[1] || gy >= rect[3])
+            continue;
+        if (!(enable & 16))
+        {
+            sHudCoveredNow = true;
+            return;
+        }
+        for (int bg = 0; bg < 4; bg++)
+            if (bgOn[bg] && ((enable >> bg) & 1) && sBgLine[bg][x].prio < (unsigned)rect[4])
+            {
+                sHudCoveredNow = true;
+                return;
+            }
+    }
+}
+
 /* Renders the GBA picture of width x height into sOut at (ox, oy). */
 static void RenderPicture(int width, int height, int ox, int oy)
 {
@@ -966,6 +999,8 @@ static void RenderPicture(int width, int height, int ox, int oy)
                 row[x] = OverlayPixel(x, enable, bgOn[0], objOn, bldcnt, blendMode, eva, evy);
                 continue;
             }
+            if (sHudRects && sBattleScene && !sHudCoveredNow)
+                HudCoverPixel(x + (sWide ? sOrgX : 0), gy, x, enable, bgOn);
             /* The two front-most layers: 0-3 BGs, 4 OBJ, 5 backdrop. */
             int first = 5, second = 5;
             uint16_t back = sCornerShown && sStageWide ? CornerBackdrop(x, y, backdrop) : backdrop;
@@ -2424,20 +2459,106 @@ static const uint8_t sObjDims[3][4][2] = {
 
 /* This frame's boxes, their pictures uploaded, and the OAM entries that are
  * theirs (before the battle's picture is rendered). */
-/* Off: the game's own boxes, magnified with the scene, read better on the
- * Thor's screen than the 3DS's 1:1 pictures (the user's call). */
+/* 0: the game's own boxes, magnified with the scene, always. */
 #ifndef BATTLE_HUD_CRISP
-#define BATTLE_HUD_CRISP 0
+#define BATTLE_HUD_CRISP 1
 #endif
+
+/* A visible OAM entry's place in GBA pixels, as the battle reads it: drawn,
+ * or with `window` one in the OBJ window's mode (3ds_video.c OamPlace). */
+static bool OamPlace(unsigned i, bool window, unsigned *priority, int *x, int *y, int *w, int *h)
+{
+    const uint16_t *obj = sMem.oam + i * 4;
+    unsigned attr0 = obj[0], attr1 = obj[1], attr2 = obj[2], shape = attr0 >> 14, mode = (attr0 >> 10) & 3;
+    bool affine = (attr0 & 0x100) != 0;
+
+    if ((!affine && (attr0 & 0x200)) || shape == 3 || (mode == 2) != window || mode == 3)
+        return false;
+    *w = sObjDims[shape][attr1 >> 14][0] * (affine && (attr0 & 0x200) ? 2 : 1);
+    *h = sObjDims[shape][attr1 >> 14][1] * (affine && (attr0 & 0x200) ? 2 : 1);
+    *x = attr1 & 511;
+    *y = attr0 & 255;
+    if (*x + *w > 512) *x -= 512;
+    if (*y + *h > 256) *y -= 256;
+    /* Where the GBA parks unused entries (y 160), tile 0 - an info box's
+     * first tile as often as not. */
+    if (*y >= GBA_H || *y + *h <= 0)
+        return false;
+    *priority = (attr2 >> 10) & 3;
+    return true;
+}
+
+static int HudLeftHalf(unsigned i)
+{
+    int k = sHudOamBox[i];
+
+    return k >= 0 && (sMem.oam[i * 4 + 2] & 1023) == sHud[k].boxTile ? k : -1;
+}
+
+/*
+ * Whether the boxes' pictures can go over the scene (3ds_video.c
+ * HudCrispPossible): nothing the scene drew last frame covered one, no
+ * sprite in front of a box overlaps its picture, and no sprite in the OBJ
+ * window's mode (a stat change's pattern) shapes the sprites over it. Also
+ * notes each picture's place for this frame's render.
+ */
+static bool HudCrispPossible(void)
+{
+    bool possible = !sHudCovered;
+    bool objWindow = (Reg(0) & 0x8000) && !((Reg(0x4A) >> 8) & 0x10);
+
+    sHudRects = 0;
+    for (unsigned i = 0; i < 128; ++i)
+    {
+        unsigned p;
+        int x, y, w, h, k = HudLeftHalf(i);
+
+        if (k < 0 || !OamPlace(i, false, &p, &x, &y, &w, &h))
+            continue;
+        /* The picture's extent in GBA pixels. */
+        w = (int)ceilf(CTR_HUD_W / CTR_BATTLE_ZOOM);
+        h = (int)ceilf(CTR_HUD_H / CTR_BATTLE_ZOOM);
+        if (sHudRects < CTR_HUD_BOXES)
+        {
+            int *rect = sHudRect[sHudRects++];
+            rect[0] = x; rect[1] = y; rect[2] = x + w; rect[3] = y + h; rect[4] = (int)p;
+        }
+        for (unsigned j = 0; j < 128 && possible; ++j)
+        {
+            unsigned q;
+            int ox, oy, ow, oh;
+
+            if (j == i || sHudOamBox[j] >= 0)
+                continue;
+            if (objWindow && OamPlace(j, true, &q, &ox, &oy, &ow, &oh)
+                && ox < x + w && ox + ow > x && oy < y + h && oy + oh > y)
+                possible = false;
+            if (!OamPlace(j, false, &q, &ox, &oy, &ow, &oh) || q > p || (q == p && j > i))
+                continue;
+            if (ox < x + w && ox + ow > x && oy < y + h && oy + oh > y)
+                possible = false;
+        }
+    }
+    return possible;
+}
 
 static void HudFrame(void)
 {
     static uint8_t rgba[CTR_HUD_W * CTR_HUD_H * 4];
+    static int lastCrisp = -1;
+    bool crisp;
 
+    /* What last frame's render found (HudCoverPixel). */
+    sHudCovered = sHudCoveredNow;
+    sHudCoveredNow = false;
     sHud = NULL;
+    sHudRects = 0;
     memset(sHudOamBox, -1, sizeof(sHudOamBox));
     if (!BATTLE_HUD_CRISP || !sBattle || !sVoxelReady || !CtrBattleHud_Ready())
+    {
+        lastCrisp = -1;
         return;
+    }
     sHud = CtrBattleHud_Boxes();
     if (!sHud)
         return;
@@ -2477,6 +2598,18 @@ static void HudFrame(void)
                                  || (box->barTiles && tile >= box->barTile && tile < (unsigned)box->barTile + box->barTiles)))
                 sHudOamBox[i] = (int8_t)k;
         }
+    }
+    /* Covered, or likely to be: the game's own boxes this frame, in the
+     * scene with whatever is in front of them. The places stay noted, so
+     * the render tells when they are clear again. */
+    crisp = HudCrispPossible();
+    if (crisp != lastCrisp)
+        CtrLog_Write(CTR_LOG_VIDEO, "HUD boxes %s (covered %d)", crisp ? "in HD" : "the game's own", sHudCovered);
+    lastCrisp = crisp;
+    if (!crisp)
+    {
+        sHud = NULL;
+        memset(sHudOamBox, -1, sizeof(sHudOamBox));
     }
 }
 
