@@ -58,7 +58,9 @@ each other language is staged once in `build/release-<code>` (the tree the
 3DS release uses) with `tools/bootstrap.py --<language>-rom`, and its recipe
 is made with the game's own reference ELF (`build/<language>-reference.s`) and
 the image map. A language's engine files, recipe and voxel programs are only
-made again when its library, data, ROM or the tools changed.
+made again when its library, data, ROM or the tools changed. The languages build
+side by side, all at once (`PARALLEL=n` caps it; one takes about 600 MiB),
+each logging to `build/android-<mode>/logs/<code>.log`.
 
 The first build of a language regenerates its whole voxel world (its
 tilesets differ a little: the Poké Center and Poké Mart signs, the shop and

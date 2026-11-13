@@ -29,6 +29,9 @@
 #     -> assets/lang/<code>/builder.
 # Steps 3-6 are skipped for a language whose library, staging, ROM and tools
 # are what they were when they last ran (build/android-<mode>/stamps).
+# The languages build side by side (all at once; PARALLEL=n caps it), each
+# with its log in build/android-<mode>/logs/;
+# their steps show on the console prefixed by their code.
 # Then one APK (build_apk.sh) with every language's library and assets.
 #
 # The ROMs are read, never copied: into the container they go read-only.
@@ -83,11 +86,21 @@ ADB=(adb ${ADB_SERIAL:+-s "$ADB_SERIAL"})
 export PYTHONUNBUFFERED=1
 STEP=""
 STEP_START=$SECONDS
+# A step's line and its time when it ends: into the output, and from a
+# language's job (whose output is its log) onto the console too (fd 3).
 step() {
-    [[ -z "$STEP" ]] || printf '   (%s: %s)\n' "$STEP" "$(elapsed $((SECONDS - STEP_START)))"
+    local line
+    if [[ -n "$STEP" ]]; then
+        line="$(printf '   (%s: %s)' "$STEP" "$(elapsed $((SECONDS - STEP_START)))")"
+        echo "$line"
+        [[ -z "${CONSOLE:-}" ]] || echo "$line" >&3
+    fi
     STEP="$1"
     STEP_START=$SECONDS
-    [[ -z "$1" ]] || echo "== $1"
+    if [[ -n "$1" ]]; then
+        echo "== $1"
+        [[ -z "${CONSOLE:-}" ]] || echo "== $1" >&3
+    fi
 }
 elapsed() { printf '%dm%02ds' $(($1 / 60)) $(($1 % 60)); }
 
@@ -113,8 +126,20 @@ for code in "${WANT[@]}"; do
     CODES+=("$code")
 done
 [[ ${#CODES[@]} -gt 0 ]] || { echo "build: no language to build (ROMs in $ROMS?)" >&2; exit 1; }
-echo "build: $MODE, languages ${CODES[*]}"
-mkdir -p "$OUT/stamps"
+# The languages build side by side, each in its own job: their trees, logs,
+# stamps and outputs are their own, and most of a language's time is
+# single-threaded Python (the voxel world's generators, the recipe, the voxel
+# programs). All of them at once by default (PARALLEL=n caps it): measured
+# with three at once, a language took ~600 MiB at its peak. The cores are
+# shared out between the jobs running together.
+MEM_FREE=$(( $(sed -n 's/^MemAvailable: *\([0-9]*\) kB/\1/p' /proc/meminfo 2>/dev/null || echo 0) / 1024 ))
+PARALLEL="${PARALLEL:-${#CODES[@]}}"
+(( PARALLEL >= 1 )) || PARALLEL=1
+(( PARALLEL <= ${#CODES[@]} )) || PARALLEL=${#CODES[@]}
+LANG_JOBS=$(( JOBS / PARALLEL ))
+(( LANG_JOBS >= 2 )) || LANG_JOBS=2
+echo "build: $MODE, languages ${CODES[*]}, $PARALLEL at once (${MEM_FREE} MiB free, make -j$LANG_JOBS each)"
+mkdir -p "$OUT/stamps" "$OUT/logs"
 rm -rf "$OUT/assets.new"
 
 # This checkout's 3ds_port/, builder/ and tools/ into a tree (bootstrap.py's
@@ -147,7 +172,7 @@ PY
     if ! [[ "$head" == "$pin" && "$marker" == "$digest" && -f "$root/.emerald3ds-locale" ]] \
         || ! grep -qs "${GAME[$code]}" "$root/.emerald3ds-locale"; then
         echo "build: staging the $code tree in $root"
-        "$PY" "$REPO/tools/bootstrap.py" --dir "$root" "${FLAG[$code]}" "$rom" --python "$PY" -j"$JOBS"
+        "$PY" "$REPO/tools/bootstrap.py" --dir "$root" "${FLAG[$code]}" "$rom" --python "$PY" -j"$LANG_JOBS"
     fi
 }
 
@@ -186,7 +211,7 @@ build_language() {
     [[ -f "$reference" ]] || { echo "build: no original game ELF at $reference (GBA_ELF=...)" >&2; exit 1; }
 
     step "$code: library and staging"
-    make -C "$tree" -f "$HERE/android.mk" -j"$JOBS" lib romfs-data build/libemerald-stripped.so build/libemeraldboot.so
+    make -C "$tree" -f "$HERE/android.mk" -j"$LANG_JOBS" lib romfs-data build/libemerald-stripped.so build/libemeraldboot.so
     [[ "$code" == en ]] || make -C "$tree" -f "$HERE/android.mk" build/gamedata_image.map
 
     local stamp
@@ -228,7 +253,48 @@ build_language() {
     stamp_of "$code" "$tree" > "$OUT/stamps/$code"
 }
 
-for code in "${CODES[@]}"; do build_language "$code"; done
+# Each language's job, its output into its log, its steps on the console.
+exec 3>&1
+declare -A JOB=() STARTED=()
+FAILED=()
+run_language() {
+    local code="$1"
+    (
+        CONSOLE=1
+        STEP=""
+        exec >"$OUT/logs/$code.log" 2>&1
+        build_language "$code"
+        step ""
+    ) &
+    JOB[$!]="$code"
+    STARTED[$code]=$SECONDS
+}
+finished() {
+    local code="${JOB[$1]}"
+    unset "JOB[$1]"
+    if [[ "$2" == 0 ]]; then
+        echo "build: $code done ($(elapsed $((SECONDS - STARTED[$code]))))"
+    else
+        FAILED+=("$code")
+        echo "build: $code FAILED (exit $2) - its log, build/android-$MODE/logs/$code.log, ends:" >&2
+        tail -15 "$OUT/logs/$code.log" | sed 's/^/    /' >&2
+    fi
+}
+for code in "${CODES[@]}"; do
+    while (( ${#JOB[@]} >= PARALLEL )); do
+        status=0
+        wait -n -p pid "${!JOB[@]}" || status=$?
+        finished "$pid" "$status"
+    done
+    [[ ${#FAILED[@]} -eq 0 ]] || break
+    run_language "$code"
+done
+while (( ${#JOB[@]} > 0 )); do
+    status=0
+    wait -n -p pid "${!JOB[@]}" || status=$?
+    finished "$pid" "$status"
+done
+[[ ${#FAILED[@]} -eq 0 ]] || { echo "build: failed: ${FAILED[*]}" >&2; exit 1; }
 rm -rf "$OUT/assets"
 mv "$OUT/assets.new" "$OUT/assets"
 
