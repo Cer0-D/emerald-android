@@ -636,6 +636,8 @@ static int OamUnwrapY(unsigned index, int y)
 static const uint8_t sObjW[4][4] = { {8, 16, 32, 64}, {16, 32, 32, 64}, {8, 8, 16, 32}, {0, 0, 0, 0} };
 static const uint8_t sObjH[4][4] = { {8, 16, 32, 64}, {8, 8, 16, 32}, {16, 32, 32, 64}, {0, 0, 0, 0} };
 
+static const uint16_t *ObjExtPalette(unsigned n);
+
 static void ObjLine(int line, int width, int height)
 {
     const uint16_t *oam = sMem.oam;
@@ -707,6 +709,7 @@ static void ObjLine(int line, int width, int height)
             continue;
         bool bpp8 = (a0 >> 13) & 1;
         unsigned tile = a2 & 0x3FF, prio = (a2 >> 10) & 3, pal = a2 >> 12;
+        const uint16_t *ext = bpp8 ? NULL : ObjExtPalette((unsigned)n);
         int16_t pa = 256, pb = 0, pc = 0, pd = 256;
         if (affine)
         {
@@ -767,7 +770,7 @@ static void ObjLine(int line, int width, int height)
                 if (mode == 2) { sObjWin[sx] = 1; continue; }
                 if (prio < objLine[sx].prio)
                 {
-                    objLine[sx].color = Pal(256 + pal * 16 + idx);
+                    objLine[sx].color = ext ? ext[idx] & 0x7FFF : Pal(256 + pal * 16 + idx);
                     objLine[sx].prio = (uint8_t)prio;
                     objLine[sx].flags = mode == 1;
                 }
@@ -1215,15 +1218,50 @@ void CtrVideo_MarkWeatherOam(unsigned first, unsigned end, bool lattice)
 {
     Mark(lattice ? sLatticeOam : sParticleOam, first, end);
 }
+/*
+ * The ext palettes (3ds_video.c CtrVideo_LatchExtPalettes): their faded
+ * colours as the game last handed them over, which are in use (a bitmask),
+ * and the one each OAM entry is drawn with, plus one (0: attr2's own). The
+ * follower's and the visible wild Pokemon's HGSS sprites use them: the 2D
+ * field's sprites (ObjLine) as the voxel world's cards do.
+ */
 static uint16_t sExtPalettes[CTR_EXT_PALETTES][16];
+static unsigned sExtInUse;
+static uint8_t sOamExt[128];
+static bool sOamExtMarked;
+
 void CtrVideo_LatchExtPalettes(const uint16_t *colors, unsigned inUse)
 {
-    if (colors && inUse)
-        memcpy(sExtPalettes, colors, (inUse > CTR_EXT_PALETTES ? CTR_EXT_PALETTES : inUse) * 32);
+    sExtInUse = inUse & ((1u << CTR_EXT_PALETTES) - 1);
+    if (colors && sExtInUse)
+        memcpy(sExtPalettes, colors, sizeof(sExtPalettes));
 }
 const uint16_t *CtrVideo_ExtPalette(unsigned index) { return sExtPalettes[index % CTR_EXT_PALETTES]; }
-void CtrVideo_ClearExtPaletteOam(void) {}
-void CtrVideo_MarkExtPaletteOam(unsigned first, unsigned end, unsigned index) { (void)first; (void)end; (void)index; }
+void CtrVideo_ClearExtPaletteOam(void)
+{
+    if (!sOamExtMarked)
+        return;
+    memset(sOamExt, 0, sizeof(sOamExt));
+    sOamExtMarked = false;
+}
+void CtrVideo_MarkExtPaletteOam(unsigned first, unsigned end, unsigned index)
+{
+    if (index >= CTR_EXT_PALETTES)
+        return;
+    if (end > 128)
+        end = 128;
+    for (unsigned i = first; i < end; ++i)
+        sOamExt[i] = (uint8_t)(index + 1);
+    sOamExtMarked = sOamExtMarked || first < end;
+}
+/* OAM entry n's ext palette while it is in use (a mark outlives a scene that
+ * stops building OAM, the palettes do not), or NULL: attr2's bank. */
+static const uint16_t *ObjExtPalette(unsigned n)
+{
+    unsigned ext = sOamExt[n];
+
+    return ext && ((sExtInUse >> (ext - 1)) & 1) ? sExtPalettes[ext - 1] : NULL;
+}
 /* The tileset animations' VRAM writes, for the voxel atlases' copies of
  * those tiles (3ds_video.c). */
 void CtrVideo_NotifyTilesetAnimWrite(const void *dest, unsigned bytes)
