@@ -20,7 +20,10 @@ SHELL := bash
 ANDROID_PORT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 ANDROID_HOME ?= $(HOME)/Android/Sdk
 NDK ?= $(lastword $(sort $(wildcard $(ANDROID_HOME)/ndk/*)))
-NDK_BIN := $(NDK)/toolchains/llvm/prebuilt/linux-x86_64/bin
+# The NDK ships its toolchain per host: linux on the release machine, darwin
+# on a Mac (x86_64 binaries, run by Rosetta on Apple silicon).
+NDK_HOST ?= $(if $(filter Darwin,$(shell uname -s)),darwin-x86_64,linux-x86_64)
+NDK_BIN := $(NDK)/toolchains/llvm/prebuilt/$(NDK_HOST)/bin
 API := 33
 # arm64-v8a by default: current phones run no 32-bit code (the Galaxy Z
 # Flip7's Android has none), and the Thor runs both. armeabi-v7a still builds,
@@ -223,7 +226,11 @@ build/libemerald.so: $(LINK_OBJS) build/emerald_android_release.ld $(LINK_CHECK_
 	$(LINK_CHECK) "$(CC)" $(LDFLAGS) -Wl,-T,build/emerald_android_release.ld -Wl,-Map,build/libemerald.lld.map @build/link.rsp $(LIBS) -o $@
 build/gamedata_image.elf: $(LINK_OBJS) build/emerald_android_image.ld build/libemerald.so $(LINK_CHECK_DEP)
 	$(file >build/link.rsp,$(LINK_OBJS))
-	$(LINK_CHECK) "$(CC)" $(LDFLAGS) -Wl,-T,build/emerald_android_image.ld -Wl,--emit-relocs @build/link.rsp $(LIBS) -o $@
+	$(LINK_CHECK) "$(CC)" $(LDFLAGS) -Wl,-T,build/emerald_android_image.ld -Wl,--emit-relocs -Wl,-Map,build/gamedata_image.lld.map @build/link.rsp $(LIBS) -o $@
+# The image's map in GNU ld's shape, for gen_recipe.py's literal classification
+# of another language's ROM (a localized recipe needs it beside --image-elf).
+build/gamedata_image.map: build/gamedata_image.elf $(ANDROID_PORT)/tools/lld_map_to_gnu.py
+	"$(PYTHON)" $(ANDROID_PORT)/tools/lld_map_to_gnu.py build/gamedata_image.lld.map $@
 
 # The data generators read the executable as $(TARGET).elf and its map in
 # GNU ld's shape (full.mk: asset table, script and song bundles).

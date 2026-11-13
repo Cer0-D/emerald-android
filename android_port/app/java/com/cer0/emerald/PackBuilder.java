@@ -30,8 +30,14 @@ import org.json.JSONObject;
 final class PackBuilder {
     interface Progress { void update(float fraction, String message); }
 
-    static final class BuildException extends Exception {
+    static class BuildException extends Exception {
         BuildException(String message) { super(message); }
+    }
+
+    /** A ROM that is not the one this build's recipe was made from. */
+    static final class WrongRom extends BuildException {
+        final String sha1;
+        WrongRom(String sha1) { super("not the supported ROM: " + sha1); this.sha1 = sha1; }
     }
 
     private final JSONObject meta;
@@ -453,8 +459,7 @@ final class PackBuilder {
         progress.update(0.0f, "Checking the ROM");
         String sha = sha1Hex(rom);
         if (!sha.equals(romSha1()))
-            throw new BuildException("This is not the supported ROM.\n\nPokémon Emerald (USA, Europe) is needed "
-                    + "(SHA-1 " + romSha1() + "); this file's SHA-1 is " + sha + ".");
+            throw new WrongRom(sha);
 
         List<JSONObject> all = new ArrayList<>();
         JSONArray entries = meta.getJSONArray("entries");

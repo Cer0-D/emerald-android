@@ -9,6 +9,8 @@ objcopy="$1" readelf="$2" in="$3" out="$4"
 args=()
 while read -r name; do
     args+=(--rename-section "$name=.data.rel.ro${name#.rodata},alloc,load,contents,data")
-done < <("$readelf" -SW "$in" | sed -nE 's/^\s*\[\s*[0-9]+\]\s+(\.rodata[^ ]*)\s.*/\1/p' | sort -u)
+done < <("$readelf" -SW "$in" | sed -nE 's/^[[:space:]]*\[[[:space:]]*[0-9]+\][[:space:]]+(\.rodata[^[:space:]]*).*/\1/p' | sort -u)
 mkdir -p "$(dirname "$out")"
-"$objcopy" "${args[@]}" "$in" "$out"
+# POSIX character classes and the ${args[@]+...} guard: macOS's sed (BSD) has
+# no \s, and its bash 3.2 refuses an empty "${args[@]}" under set -u.
+"$objcopy" ${args[@]+"${args[@]}"} "$in" "$out"
