@@ -16,7 +16,6 @@
 
 #include "android_host.h"
 #include "android_lowmem.h"
-#include "3ds_locale.h"
 #include "3ds_platform.h"
 #include "3ds_video.h"
 
@@ -300,24 +299,6 @@ JNIEXPORT void JNICALL FN(nativeCapture)(JNIEnv *env, jclass cls)
     atomic_store(&sCapture, true);
 }
 
-/* The language of the follower's texts (FollowerFetcher.java): the game's,
- * as src/follower_mon.c picks its followers/text/LL.bin. */
-JNIEXPORT jstring JNICALL FN(nativeFollowerLanguage)(JNIEnv *env, jclass cls)
-{
-    (void)cls;
-#if GAME_LANGUAGE == LANGUAGE_SPANISH
-    return (*env)->NewStringUTF(env, "es");
-#elif GAME_LANGUAGE == LANGUAGE_FRENCH
-    return (*env)->NewStringUTF(env, "fr");
-#elif GAME_LANGUAGE == LANGUAGE_ITALIAN
-    return (*env)->NewStringUTF(env, "it");
-#elif GAME_LANGUAGE == LANGUAGE_GERMAN
-    return (*env)->NewStringUTF(env, "de");
-#else
-    return (*env)->NewStringUTF(env, "en");
-#endif
-}
-
 /* ── Loading ──────────────────────────────────────────────────────────── */
 /*
  * Java loads libemeraldboot.so (android_port/boot), which puts this library
@@ -334,7 +315,6 @@ JNIEXPORT jint AndroidMain_OnLoad(JavaVM *vm, JNIEnv *env)
         {"nativeTouch", "(IFFII)V", (void *)FN(nativeTouch)},
         {"nativePause", "(Z)V", (void *)FN(nativePause)},
         {"nativeCapture", "()V", (void *)FN(nativeCapture)},
-        {"nativeFollowerLanguage", "()Ljava/lang/String;", (void *)FN(nativeFollowerLanguage)},
     };
     jclass cls = (*env)->FindClass(env, "com/cer0/emerald/MainActivity");
 

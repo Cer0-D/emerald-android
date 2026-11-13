@@ -8,7 +8,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="${1:-$HERE/../build/shots}"
 NAME="${2:-shot}"
 PY="${PYTHON:-$HERE/../../build/venv/bin/python}"
-D=/sdcard/Android/data/com.cer0.emerald.dev/files
+F=/sdcard/Android/data/com.cer0.emerald.dev/files
+# The game writes its captures into the root of the language it plays
+# (<files>/<code>/, Languages.java): language.txt names it.
+D="$F/$(adb exec-out cat "$F/language.txt" 2>/dev/null | tr -d '[:space:]')"
 mkdir -p "$OUT"
 adb shell am start -n com.cer0.emerald.dev/com.cer0.emerald.MainActivity --ez capture true >/dev/null
 sleep 0.5

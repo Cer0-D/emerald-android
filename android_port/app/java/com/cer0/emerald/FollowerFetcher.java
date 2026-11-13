@@ -29,8 +29,8 @@ import org.json.JSONObject;
  * 3DS's builder gets them (builder/emerald3ds_builder/followers.py): HGSS's
  * files from the commits assets/followers/sources.json pins (made by
  * build_apk.sh from followers_sources.py), each checked against its size and
- * SHA-256, converted (FollowerFiles) and written to
- * sdmc/3ds/emerald3ds/followers/, where the game data layer looks for them
+ * SHA-256, converted (FollowerFiles) and written to the language's
+ * sdmc/3ds/emerald3ds/followers/ (<files>/<code>/, Languages), where the game data layer looks for them
  * when its own data has none (3ds_data.c). None of it ships with the APK.
  *
  * In the background at every start until one run got everything; the game
@@ -79,7 +79,9 @@ final class FollowerFetcher {
         for (String line : sorted.values()) sourcesTxt.append(line);
         String stamp = sourcesTxt + "text " + language + "\n";
 
-        File dir = new File(MainActivity.filesDir(c), DIR);
+        // The language's own root (Languages): its texts, and its own copy
+        // of the sprites, beside its data pack.
+        File dir = new File(Languages.root(c, language), DIR);
         File done = new File(dir, ".done");
         if (stamp.equals(readText(done))) return;
         File pin = new File(dir, ".pin");

@@ -1,51 +1,90 @@
 # Other languages
 
-Emerald for Android builds one variant per cartridge language, as Emerald 3DS
-ships one 3DSX per language. Each variant is its own APK: the port's own
-tables (font widths, keyboard, Pokédex order, credits) come from that
-language's clean ROM at build time, and its recipe describes how the app
-rebuilds the game's data from the player's own cartridge. No game data is
-distributed in either.
+Emerald for Android is one app for every supported cartridge language. The
+player picks their own ROM; the app recognizes which cartridge it is by its
+SHA-1, builds that language's game data from it and plays it. Each language
+keeps its own save, settings, data pack and follower files, so picking
+another language's ROM later starts that language's own game and never
+touches the other's save. No game data is distributed.
 
-| Language | ROM | Game code |
-|---|---|---|
-| English | Pokémon Emerald (USA, Europe) | BPEE |
-| French | Pokémon Émeraude (France) | BPEF |
-| Spanish | Pokémon Esmeralda (España) | BPES |
-| Italian | Pokémon Smeraldo (Italia) | BPEI |
-| German | Pokémon Smaragd (Deutschland) | BPED |
-| Japanese | ポケモンエメラルド (日本) | BPEJ |
+| Language | ROM | Game code | In the app |
+|---|---|---|---|
+| English | Pokémon Emerald (USA, Europe) | BPEE | yes |
+| French | Pokémon Émeraude (France) | BPEF | yes |
+| Italian | Pokémon Smeraldo (Italia) | BPEI | yes |
+| German | Pokémon Smaragd (Deutschland) | BPED | yes |
+| Spanish | Pokémon Esmeralda (España) | BPES | not yet |
+| Japanese | ポケモンエメラルド (日本) | BPEJ | not yet |
 
 The checksums and the localization each language needs are the ones Emerald
-3DS uses: [FRENCH.md](FRENCH.md), [SPANISH.md](SPANISH.md),
-[ITALIAN.md](ITALIAN.md), [GERMAN.md](GERMAN.md), [JAPANESE.md](JAPANESE.md).
-Brazilian Portuguese has no cartridge of its own; it is a translation over the
-English game ([PORTUGUESE.md](PORTUGUESE.md)) and is built with `--locale pt`
-from the English ROM.
+3DS uses: [FRENCH.md](FRENCH.md), [ITALIAN.md](ITALIAN.md),
+[GERMAN.md](GERMAN.md), [SPANISH.md](SPANISH.md), [JAPANESE.md](JAPANESE.md).
+A Spanish or Japanese ROM is recognized and the app says it is not supported
+yet.
+
+## How it works
+
+Each language is its own build of the game: its own library (`GAME_LANGUAGE`
+and the localized sources are compiled in), its own engine files and its own
+recipe (the clean ROM's SHA-1, and the literals pointing into that library).
+The APK carries one set per language:
+
+```
+lib/arm64-v8a/libemerald_<code>.so       one game library per language
+lib/arm64-v8a/libemeraldboot.so          loads the chosen one below 4 GiB
+assets/lang/<code>/engine/               its engine files
+assets/lang/<code>/builder/              recipe.json, literals.bin, abi.txt, rom.txt
+```
+
+On the device each language plays from its own root, `<files>/<code>/`
+(engine files, and `sdmc/`: data pack, save, settings, follower files);
+`<files>/language.txt` names the language played last, which starts at once
+while its data pack matches this build. The app asks for a ROM again only when
+it has to build a pack (first start, or an update that changed that
+language's data); the ROM picked then decides the language. An update from the
+one-language app (0.5.0.1) moves its files into `<files>/en/`.
 
 ## Building
 
 ```
-android_port/tools/release.sh "Pokémon Émeraude (France).gba" --locale fr
+android_port/tools/build.sh                  # development APK, installed over adb
+android_port/tools/build.sh --release        # the release APK, audited against every ROM
 ```
 
-The script stages the language in `build/release-fr` (the same tree the 3DS
-release uses) with `tools/bootstrap.py --french-rom`, builds the library and
-the data there, makes the recipe from that ROM with the game's own reference
-ELF (`build/french-reference.s`) and the image map, and writes
-`build/android-release-fr/emerald-android-fr.apk`. Running it again reuses the
-staged tree. Without `--locale` it builds the English variant as before.
+The clean ROMs are found by SHA-1 in `--roms DIR` (default
+`~/Documents/gba_roms`). `LANGS=en,fr` builds only those languages; a
+development build leaves out a language whose ROM is missing, a release
+needs them all. English builds in the development tree, `build/upstream`;
+each other language is staged once in `build/release-<code>` (the tree the
+3DS release uses) with `tools/bootstrap.py --<language>-rom`, and its recipe
+is made with the game's own reference ELF (`build/<language>-reference.s`) and
+the image map. A language's engine files, recipe and voxel programs are only
+made again when its library, data, ROM or the tools changed.
 
-The variant installs as `com.cer0.emerald.<code>` and shows its own launcher
-label, so two languages can stay installed side by side: a save from one game
-never opens in another.
+The first build of a language regenerates its whole voxel world (its
+tilesets differ a little: the Poké Center and Poké Mart signs, the shop and
+Battle Dome lettering), which takes a while. A change to
+`patches/pokeemerald/` stages every language tree again. A change to a game
+source file a language manifest pins needs
+`tools/rebase_locale_manifests.py`, or that language's build stops.
 
 `podman` runs the voxel precompile in the release image. On a machine with the
 pinned interpreter and Pillow (`build/venv`), `VOXEL_LOCAL=1` runs it directly.
 
+The development app (`com.cer0.emerald.dev`, "Emerald Dev") plays ROMs pushed
+over adb:
+
+```
+android_port/tools/dev_rom.sh "Pokemon - Version Emeraude (France).gba"
+```
+
+It keeps them in `<files>/roms/` and builds a language's pack again by itself
+when a new build changed it.
+
 ## Status
 
-The French, Italian and German variants build, and each recipe rebuilds its
+Status of the French, Italian and German builds when they were separate
+APKs (PRs #1-#3): each built, and each recipe rebuilt its
 data pack byte for byte with the app's Java builder (`PackBuilder`) and with
 the desktop builder (6,394 files for French and Italian, 6,393 for German;
 ABI `770cc65b`, `a6ddd39a` and `dee20f98`).

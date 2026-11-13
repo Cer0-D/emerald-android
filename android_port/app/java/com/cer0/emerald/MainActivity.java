@@ -24,9 +24,12 @@ import android.view.WindowInsetsController;
  */
 public class MainActivity extends Activity {
     static final String TAG = "Emerald";
-    // The boot library loads the game library, libemerald.so, where it can run
-    // (android_port/boot/emerald_boot.c) and registers its native methods.
+    // The boot library (android_port/boot/emerald_boot.c) loads one
+    // language's game library, libemerald_<code>.so, below 4 GiB on request
+    // (nativeLoadGame), and that one registers the methods below.
     static { System.loadLibrary("emeraldboot"); }
+
+    static native boolean nativeLoadGame(String code);
 
     static native void nativeInit(String filesDir, String romfsDir);
     static native void nativeSurface(int screen, Object surface); // surface null = gone
@@ -35,7 +38,6 @@ public class MainActivity extends Activity {
     static native void nativeTouch(int action, float x, float y, int w, int h);
     static native void nativePause(boolean paused);
     static native void nativeCapture();
-    static native String nativeFollowerLanguage(); // the follower texts' language (FollowerFetcher)
 
     public static final int SCREEN_TOP = 0, SCREEN_BOTTOM = 1;
 
@@ -100,41 +102,59 @@ public class MainActivity extends Activity {
         getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         // Local wireless play's radio (Bluetooth LE) asks through this activity.
         LocalBluetooth.attach(this);
-        // The follower Pokémon's sprites and texts, downloaded in the
-        // background until they are all there (FollowerFetcher).
-        FollowerFetcher.start(this, nativeFollowerLanguage());
         /*
-         * A release APK carries the engine files and the recipe (assets/engine,
-         * assets/builder: android.mk android-release), never game data: the
-         * game data pack is built here, from the player's ROM, at first boot
-         * (Setup, PackBuilder). A development APK carries neither, its data
-         * pushed to romfs/ over adb as before.
+         * The APK carries every supported language (Languages); each plays
+         * from its own root. The one played last starts at once when its data
+         * pack was built for this APK; otherwise the setup screen asks for a
+         * ROM, and the ROM's language is the one built and played (Setup).
+         * A development install takes its ROMs from <files>/roms/ instead,
+         * the one named by `--es rom NAME` first (tools/dev_rom.sh).
          */
-        if (Setup.isRelease(this)) {
-            try {
-                Setup.extractEngine(this);
-            } catch (java.io.IOException e) {
-                Log.e(TAG, "engine files", e);
-            }
-            if (!Setup.packReady(this)) {
-                mSetup = new Setup(this);
-                mSetup.show();
-                return;
-            }
-            startGame(Setup.ENGINE_DIR);
+        Languages.migrate(this);
+        String code = Languages.active(this);
+        String devRom = Languages.isDev(this) ? getIntent().getStringExtra("rom") : null;
+        if (devRom == null && Languages.carries(this, code) && Languages.packReady(this, code)) {
+            startGame(code);
             return;
         }
-        startGame("romfs");
+        mSetup = new Setup(this);
+        mSetup.show();
+        if (Languages.isDev(this))
+            mSetup.devRom(devRom, Languages.carries(this, code) ? code : null);
     }
 
-    /* romfs/ (or engine/, a release's engine files) and sdmc/ (saves,
-     * settings, log, the data pack) live in the app's external files dir:
-     * reachable over adb, removed with the app. */
-    void startGame(String romfsDir) {
+    /* A language's game: its library loaded, its engine files extracted,
+     * and its root - engine/ (romfs:/) and sdmc/ (save, settings, log, data
+     * pack, follower files), in the app's external files dir: reachable over
+     * adb, removed with the app - handed to it. */
+    void startGame(String code) {
         if (mStarted) return;
+        if (!nativeLoadGame(code)) {
+            // Another language's library is in this process: a fresh process
+            // for this one. Once - a library that does not load at all says so.
+            if (!getIntent().getBooleanExtra("restarted", false)) {
+                Log.w(TAG, "restarting for " + code);
+                restart();
+                return;
+            }
+            android.widget.TextView t = new android.widget.TextView(this);
+            t.setText("The game library for \"" + code + "\" did not load (see logcat).");
+            t.setTextSize(20);
+            setContentView(t);
+            return;
+        }
+        try {
+            Setup.extractEngine(this, code);
+        } catch (java.io.IOException e) {
+            Log.e(TAG, "engine files", e);
+        }
+        // The follower Pokémon's sprites and texts, downloaded in the
+        // background until they are all there (FollowerFetcher).
+        FollowerFetcher.start(this, code);
         mStarted = true;
         mSetup = null;
-        nativeInit(filesDir(this).getAbsolutePath(), romfsDir);
+        Log.i(TAG, "playing " + code);
+        nativeInit(Languages.root(this, code).getAbsolutePath(), Setup.ENGINE_DIR);
         handleIntent(getIntent());
         SurfaceView top = new SurfaceView(this);
         top.getHolder().addCallback(new ScreenCallback(SCREEN_TOP));
@@ -144,6 +164,18 @@ public class MainActivity extends Activity {
             showBottom();
             nativePause(false);
         }
+    }
+
+    /* This activity again in a new process (language.txt says which). */
+    private void restart() {
+        android.content.Intent i = new android.content.Intent(this, MainActivity.class);
+        i.putExtra("restarted", true);
+        android.app.PendingIntent p = android.app.PendingIntent.getActivity(this, 0, i,
+                android.app.PendingIntent.FLAG_IMMUTABLE | android.app.PendingIntent.FLAG_CANCEL_CURRENT);
+        android.app.AlarmManager am = (android.app.AlarmManager) getSystemService(ALARM_SERVICE);
+        am.set(android.app.AlarmManager.RTC, System.currentTimeMillis() + 300, p);
+        finishAffinity();
+        android.os.Process.killProcess(android.os.Process.myPid());
     }
 
     @Override protected void onActivityResult(int request, int result, android.content.Intent data) {

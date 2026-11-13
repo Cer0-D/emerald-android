@@ -185,22 +185,28 @@ distributed here or in the releases.
 ## Building from source
 
 ```sh
-python tools/bootstrap.py --make       # pinned upstream + patches + port -> build/upstream
-cd build/upstream/3ds_port
-make -f ../../../android_port/android.mk -j16 push-data  # the whole game data, once, over adb
-make -f ../../../android_port/android.mk -j16 install    # the development APK
+python tools/bootstrap.py --make           # pinned upstream + patches + port -> build/upstream
+android_port/tools/build.sh                # the development APK, every language, installed over adb
+android_port/tools/dev_rom.sh ROM.gba      # play a ROM in it (any supported language)
 ```
 
-It needs the Android SDK and NDK (`ANDROID_HOME`, default `~/Android/Sdk`),
-a Python with Pillow in `build/venv`, and libclang's Python bindings for the
-system `python3` (the arm64 build's layout check, `android_port/tools/check_overlays.py`).
-A release also needs podman.
+One APK carries every supported cartridge language (English, French,
+Italian, German): the app reads the player's ROM, recognizes its language and
+builds that language's game data from it, each language with its own save
+and settings ([languages](docs/ANDROID-LANGUAGES.md)).
 
-A development install reads the game data pushed to the device over adb,
-built from your own ROM by the tree above. A release APK is made with
-`android_port/tools/release.sh ROM.gba`: the library, the engine files and
-the recipe the app builds the game data from, checked by
-`tools/release_audit.py`. It reports each step and its time as it goes.
+`build.sh` finds the clean ROMs by SHA-1 in `--roms DIR` (default
+`~/Documents/gba_roms`); `LANGS=en,fr` narrows the languages. It needs the
+Android SDK and NDK (`ANDROID_HOME`, default `~/Android/Sdk`), a Python with
+Pillow in `build/venv`, libclang's Python bindings for the system `python3`
+(the arm64 build's layout check, `android_port/tools/check_overlays.py`) and
+podman (the voxel programs). It reports each step and its time as it goes.
+
+The development app (`com.cer0.emerald.dev`, "Emerald Dev") plays the ROMs
+pushed with `dev_rom.sh` and keeps them, rebuilding a language's data by
+itself when a build changes it. The release APK is
+`android_port/tools/build.sh --release`: every language, checked by
+`tools/release_audit.py` against each ROM.
 
 The build is 64-bit (`arm64-v8a`). `ANDROID_ABI=armeabi-v7a` still builds
 the 32-bit library, unsupported; build it in a tree of its own, as the two

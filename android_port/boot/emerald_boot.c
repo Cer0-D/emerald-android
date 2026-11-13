@@ -1,6 +1,8 @@
 /*
- * libemeraldboot.so: what Java loads (MainActivity). It loads the game,
- * libemerald.so, below 4 GiB and has it register its native methods.
+ * libemeraldboot.so: what Java loads (MainActivity). On request
+ * (MainActivity.nativeLoadGame) it loads one language's game library,
+ * libemerald_<code>.so, below 4 GiB and has it register its native methods.
+ * The APK carries one library per cartridge language; a process loads one.
  *
  * The game keeps addresses in 32 bits - its assembled data holds them as
  * `.int symbol`, its code in u32 variables - so on arm64 the library, and
@@ -18,6 +20,7 @@
 #include <elf.h>
 #include <fcntl.h>
 #include <jni.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -25,7 +28,7 @@
 #include <unistd.h>
 
 #define TAG "Emerald"
-#define LIBRARY "libemerald.so"
+#define LIBRARY_PREFIX "libemerald_"
 #define LOW_START 0x01000000UL
 #define LOW_STEP 0x01000000UL
 /* Below 2 GiB: see android_port/src/android_lowmem.c (sign extension). */
@@ -113,37 +116,84 @@ static void *LoadGame(const char *path)
 #endif
 }
 
-JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved)
+static JavaVM *sVm;
+static char sLoaded[8];   /* the language loaded, "" none */
+
+/* MainActivity.nativeLoadGame(code): the game library for language `code`
+ * (en, fr...), loaded and its natives registered; true when that one is
+ * loaded. False when it could not be, or when another language's already
+ * is (a process holds one: the caller restarts it). */
+static jboolean LoadGameNative(JNIEnv *env, jclass cls, jstring jcode)
 {
-    JNIEnv *env;
     Dl_info self;
     char path[512];
+    const char *code;
     void *handle;
     OnLoadFn onLoad;
+    bool ok = false;
 
-    (void)reserved;
-    if ((*vm)->GetEnv(vm, (void **)&env, JNI_VERSION_1_6) != JNI_OK)
-        return JNI_ERR;
-    /* The game library is beside this one, in the APK's native library dir. */
-    if (dladdr((void *)JNI_OnLoad, &self) == 0 || self.dli_fname == NULL)
-        return JNI_ERR;
+    (void)cls;
+    if (jcode == NULL || (code = (*env)->GetStringUTFChars(env, jcode, NULL)) == NULL)
+        return JNI_FALSE;
+    if (sLoaded[0])
+    {
+        ok = strcmp(sLoaded, code) == 0;
+        if (!ok)
+            __android_log_print(ANDROID_LOG_WARN, TAG, "boot: %s is loaded, %s asked for", sLoaded, code);
+        goto done;
+    }
+    /* Two to seven letters: a language code, nothing that names a path. */
+    for (size_t i = 0; code[i]; i++)
+        if (code[i] < 'a' || code[i] > 'z' || i >= sizeof(sLoaded) - 1)
+            goto done;
+    if (strlen(code) < 2)
+        goto done;
+    /* The game libraries are beside this one, in the APK's native library dir. */
+    if (dladdr((void *)LoadGameNative, &self) == 0 || self.dli_fname == NULL)
+        goto done;
     snprintf(path, sizeof(path), "%s", self.dli_fname);
     char *slash = strrchr(path, '/');
-    if (slash == NULL || (size_t)(slash + 1 - path) + sizeof(LIBRARY) > sizeof(path))
-        return JNI_ERR;
-    memcpy(slash + 1, LIBRARY, sizeof(LIBRARY));
+    if (slash == NULL)
+        goto done;
+    snprintf(slash + 1, sizeof(path) - (size_t)(slash + 1 - path), LIBRARY_PREFIX "%s.so", code);
 
     handle = LoadGame(path);
     if (handle == NULL)
     {
         __android_log_print(ANDROID_LOG_ERROR, TAG, "boot: %s did not load: %s", path, dlerror());
-        return JNI_ERR;
+        goto done;
     }
     onLoad = (OnLoadFn)dlsym(handle, "AndroidMain_OnLoad");
     if (onLoad == NULL)
     {
         __android_log_print(ANDROID_LOG_ERROR, TAG, "boot: %s has no AndroidMain_OnLoad", path);
-        return JNI_ERR;
+        goto done;
     }
-    return onLoad(vm, env);
+    if (onLoad(sVm, env) == JNI_ERR)
+        goto done;
+    snprintf(sLoaded, sizeof(sLoaded), "%s", code);
+    __android_log_print(ANDROID_LOG_INFO, TAG, "boot: %s loaded", path);
+    ok = true;
+done:
+    (*env)->ReleaseStringUTFChars(env, jcode, code);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *reserved)
+{
+    static const JNINativeMethod methods[] = {
+        {"nativeLoadGame", "(Ljava/lang/String;)Z", (void *)LoadGameNative},
+    };
+    JNIEnv *env;
+    jclass cls;
+
+    (void)reserved;
+    sVm = vm;
+    if ((*vm)->GetEnv(vm, (void **)&env, JNI_VERSION_1_6) != JNI_OK)
+        return JNI_ERR;
+    cls = (*env)->FindClass(env, "com/cer0/emerald/MainActivity");
+    if (cls == NULL || (*env)->RegisterNatives(env, cls, methods, 1) != 0)
+        return JNI_ERR;
+    (*env)->DeleteLocalRef(env, cls);
+    return JNI_VERSION_1_6;
 }

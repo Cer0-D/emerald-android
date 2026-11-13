@@ -266,26 +266,13 @@ lib: build/libemerald.so
 romfs-data: $(ROMFS_ANDROID) romfs/engine/abi.bin romfs/engine/build_id.bin romfs/data.embedded
 all: lib romfs-data
 
-# ── APK ────────────────────────────────────────────────────────────────────
+# ── For the APK (tools/build.sh, build_apk.sh) ────────────────────────────
 build/libemerald-stripped.so: build/libemerald.so
 	"$(NDK_BIN)/llvm-strip" --strip-debug -o $@ $<
-# What Java loads: it puts libemerald.so below 4 GiB (boot/emerald_boot.c).
+# What Java loads: it puts a language's libemerald_<code>.so below 4 GiB
+# (boot/emerald_boot.c).
 build/libemeraldboot.so: $(ANDROID_PORT)/boot/emerald_boot.c build/config
 	"$(CC)" $(CFLAGS) -Werror -shared -fuse-ld=lld -Wl,-z,max-page-size=16384 $< -o $@ -ldl -llog
-.PHONY: apk install
-apk: build/libemerald-stripped.so build/libemeraldboot.so
-	ABI=$(ANDROID_ABI) bash $(ANDROID_PORT)/build_apk.sh $(abspath build/libemerald-stripped.so) $(abspath build/libemeraldboot.so)
-install: apk
-	adb install -r $(ANDROID_PORT)/build/emerald-thor.apk
-
-# The data that records this link's addresses (asset index, script and song
-# relocations, ABI) goes to the device with every install; the rest of
-# romfs/ only changes with the game's data (push-data).
-DEVICE_FILES := /sdcard/Android/data/com.cer0.emerald.dev/files
-LINKED_DATA := romfs/assets romfs/scripts romfs/sound romfs/gamedata romfs/engine romfs/bottom
-.PHONY: push-linked push-data
-push-linked: romfs-data
-	tar -cf - $(LINKED_DATA) | adb exec-in "mkdir -p $(DEVICE_FILES) && tar -xf - -C $(DEVICE_FILES)"
-push-data: romfs-data
-	tar -cf - romfs | adb exec-in "mkdir -p $(DEVICE_FILES) && tar -xf - -C $(DEVICE_FILES)"
-install: push-linked
+# The APK - every language's library, engine files and recipe - is made by
+# android_port/tools/build.sh; the development app plays the ROMs pushed with
+# android_port/tools/dev_rom.sh.
