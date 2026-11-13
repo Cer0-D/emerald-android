@@ -77,10 +77,13 @@ step() {
 }
 elapsed() { printf '%dm%02ds' $(($1 / 60)) $(($1 % 60)); }
 
-# The language's tree: tools/bootstrap.py resets it when the patches or the
-# language changed, so a second release of the same language reuses it.
+# The language's tree. tools/bootstrap.py resets it when the patches, the pin
+# or the language changed. A current tree is reused, but its copy of the port
+# is refreshed on every release: bootstrap.py's last step copies 3ds_port/,
+# builder/ and tools/ into the tree, and skipping that would build the second
+# release from the first one's snapshot.
 bootstrap_locale() {
-    local flag game
+    local flag game pin head marker digest current
     case "$LOCALE" in
         es) flag=--spanish-rom;  game=BPES ;;
         fr) flag=--french-rom;   game=BPEF ;;
@@ -89,15 +92,41 @@ bootstrap_locale() {
         ja) flag=--japanese-rom; game=BPEJ ;;
         pt) flag=--port-lang;    game=PT-BR ;;
     esac
-    if [[ -f "$TREE_ROOT/.emerald3ds-locale" ]] && grep -q "$game" "$TREE_ROOT/.emerald3ds-locale"; then
-        return
+    pin=$("$PY" -c 'import sys,tomllib;print(tomllib.load(open(sys.argv[1],"rb"))["pokeemerald"]["commit"])' \
+        "$REPO/upstream.lock")
+    head=$(git -C "$TREE_ROOT" rev-parse HEAD 2>/dev/null || true)
+    marker=$(cat "$TREE_ROOT/.emerald3ds-patches" 2>/dev/null || true)
+    digest=$("$PY" - "$REPO" <<'PY'
+import pathlib, sys
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / "tools"))
+import bootstrap
+print(bootstrap.patch_digest(sorted((pathlib.Path(sys.argv[1]) / "patches" / "pokeemerald").glob("*.patch"))))
+PY
+)
+    current=0
+    if [[ "$head" == "$pin" && "$marker" == "$digest" && -f "$TREE_ROOT/.emerald3ds-locale" ]] \
+        && grep -q "$game" "$TREE_ROOT/.emerald3ds-locale"; then
+        current=1
     fi
-    echo "release: staging the $LOCALE tree in $TREE_ROOT"
-    if [[ "$LOCALE" == pt ]]; then
-        "$PY" "$REPO/tools/bootstrap.py" --dir "$TREE_ROOT" --port-lang pt_br --python "$PY" -j"$JOBS"
-    else
-        "$PY" "$REPO/tools/bootstrap.py" --dir "$TREE_ROOT" "$flag" "$ROM" --python "$PY" -j"$JOBS"
+    if [[ "$current" == 0 ]]; then
+        echo "release: staging the $LOCALE tree in $TREE_ROOT"
+        if [[ "$LOCALE" == pt ]]; then
+            "$PY" "$REPO/tools/bootstrap.py" --dir "$TREE_ROOT" --port-lang pt_br --python "$PY" -j"$JOBS"
+        else
+            "$PY" "$REPO/tools/bootstrap.py" --dir "$TREE_ROOT" "$flag" "$ROM" --python "$PY" -j"$JOBS"
+        fi
     fi
+    # bootstrap.py's last step, on every release: the tree must carry the
+    # 3ds_port/, builder/ and tools/ being released, not the ones it was
+    # staged with.
+    "$PY" - "$REPO" "$TREE_ROOT" <<'PY'
+import pathlib, shutil, sys
+root, tree = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+for name in ("3ds_port", "builder", "tools"):
+    if (root / name).is_dir():
+        shutil.copytree(root / name, tree / name, dirs_exist_ok=True,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "build", "dist"))
+PY
 }
 
 # A ROM that is not the English one needs its own symbol table (--gba-elf: the
