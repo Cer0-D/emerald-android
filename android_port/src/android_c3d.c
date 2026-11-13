@@ -6,6 +6,8 @@
  */
 #include <GLES3/gl3.h>
 #include <GLES3/gl3ext.h>
+#include <GLES2/gl2ext.h>
+#include <EGL/egl.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -291,6 +293,48 @@ static size_t sDetileSize;
 
 /* Memory rows [y0, y1) of the texture, detiled and uploaded. The first row of
  * memory is the top of the picture (v = 1), the GL texture's last row. */
+/*
+ * What the GL context was last set to by the draws, so that a draw sets only
+ * what differs from the one before. The voxel world makes some 15,000 draws a
+ * frame in a town, nearly all alike, and setting all of their state again
+ * took a whole frame's time there (port.log "late", 2026-11-13: draw 17 ms in
+ * Rustboro). Forgotten wherever else GL state may change: a clear, a target
+ * switch, AndroidC3D_ResetState after the world, and (only the textures) a
+ * texture made or uploaded outside a draw.
+ */
+static struct
+{
+    bool valid;            /* the fixed-function state below is what GL has */
+    bool texValid;         /* tex[] and activeUnit are */
+    GLuint program, vao, arrayBuffer;
+    GLint viewport[4];
+    bool scissorOn;
+    GLint scissor[4];
+    u8 colorMask;
+    bool depthTest, depthMask;
+    GLenum depthFunc, cull;            /* cull 0: off */
+    bool blend;
+    GLenum blendEq[2], blendFactor[4];
+    u32 blendColor;
+    unsigned activeUnit;
+    GLuint tex[3];
+    bool constKnown[16];
+    float constValue[16][4];
+} sGl;
+/* The VAO's own state, kept across everything but AndroidC3D_Init: only the
+ * draws use their VAO. */
+static u16 sAttribOn;
+
+static void GlForget(void)
+{
+    memset(&sGl, 0, sizeof(sGl));
+}
+
+static void GlForgetTextures(void)
+{
+    sGl.texValid = false;
+}
+
 static void UploadRows(TexEntry *e, unsigned y0, unsigned y1)
 {
     GlFormat f = FormatOf(e->fmt);
@@ -336,6 +380,7 @@ static void UploadRows(TexEntry *e, unsigned y0, unsigned y1)
             }
         }
     }
+    GlForgetTextures();
     glBindTexture(GL_TEXTURE_2D, e->gl);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, (GLint)(h - y1), (GLsizei)w, (GLsizei)rows, f.format, f.type, sDetile);
@@ -362,6 +407,7 @@ static void CreateGlSized(TexEntry *e, int width, int height)
     e->glWidth = (u16)width;
     e->glHeight = (u16)height;
     glGenTextures(1, &e->gl);
+    GlForgetTextures();
     glBindTexture(GL_TEXTURE_2D, e->gl);
     glTexImage2D(GL_TEXTURE_2D, 0, f.internal, width, height, 0, f.format, f.type, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, f.swizzle[0]);
@@ -381,15 +427,30 @@ static void BuryPending(void)
     pthread_mutex_unlock(&sTexLock);
 }
 
+static void ActiveUnit(unsigned unit)
+{
+    if (!sGl.texValid || sGl.activeUnit != unit)
+    {
+        glActiveTexture(GL_TEXTURE0 + unit);
+        if (!sGl.texValid)
+        {
+            memset(sGl.tex, 0, sizeof(sGl.tex));
+            sGl.texValid = true;
+        }
+        sGl.activeUnit = unit;
+    }
+}
+
 /* The GL texture of `tex`, current with what was written to it, bound to
- * the active unit with its sampler state. */
-static GLuint PrepareTexture(C3D_Tex *tex)
+ * texture unit `unit` with its sampler state (and that unit left active). */
+static GLuint PrepareTextureOn(C3D_Tex *tex, unsigned unit)
 {
     TexEntry *e;
     size_t lo, hi;
 
     if (!tex || !tex->data || !tex->width || !tex->height)
         return 0;
+    ActiveUnit(unit);
     pthread_mutex_lock(&sTexLock);
     e = FindEntry(tex, true);
     e->lastUse = ++sUseClock;
@@ -411,9 +472,20 @@ static GLuint PrepareTexture(C3D_Tex *tex)
         if (y1 > e->height) y1 = e->height;
         if (y1 > y0) UploadRows(e, y0, y1);
     }
-    glBindTexture(GL_TEXTURE_2D, e->gl);
+    /* An upload above bound it, and forgot the units: on this one again. */
+    ActiveUnit(unit);
+    if (sGl.tex[unit] != e->gl)
+    {
+        glBindTexture(GL_TEXTURE_2D, e->gl);
+        sGl.tex[unit] = e->gl;
+    }
     ApplyParam(e, tex->param);
     return e->gl;
+}
+
+static GLuint PrepareTexture(C3D_Tex *tex)
+{
+    return PrepareTextureOn(tex, 0);
 }
 
 /* What C3D_FrameEnd's flush of the linear heap does for the GPU: every
@@ -447,8 +519,11 @@ void AndroidC3D_FlushLinear(void)
 
 unsigned AndroidC3D_GLTexture(C3D_Tex *tex)
 {
-    glActiveTexture(GL_TEXTURE0);
-    return PrepareTexture(tex);
+    /* For the video's own draws, which bind textures of their own after. */
+    GLuint gl = PrepareTexture(tex);
+
+    GlForgetTextures();
+    return gl;
 }
 
 bool C3D_TexInit(C3D_Tex *tex, u16 width, u16 height, GPU_TEXCOLOR format)
@@ -1017,6 +1092,7 @@ static GLuint DepthBuffer(int width, int height, int depthFmt)
 C3D_RenderTarget *C3D_RenderTargetCreate(int width, int height, GPU_COLORBUF colorFmt, int depthFmt)
 {
     C3D_RenderTarget *t = (C3D_RenderTarget *)calloc(1, sizeof(*t));
+    GlForget(); /* binds a framebuffer, its renderbuffers or texture */
 
     (void)colorFmt;
     t->width = width;
@@ -1043,6 +1119,7 @@ C3D_RenderTarget *AndroidC3D_RenderTargetScaled(C3D_Tex *tex, int depthFmt, floa
 {
     C3D_RenderTarget *t;
     TexEntry *e;
+    GlForget(); /* binds a framebuffer, its renderbuffers or texture */
 
     if (!tex || !tex->data)
         return NULL;
@@ -1095,6 +1172,7 @@ void C3D_RenderTargetClear(C3D_RenderTarget *target, C3D_ClearBits clearBits, u3
 
     if (!target)
         return;
+    GlForget();
     glBindFramebuffer(GL_FRAMEBUFFER, target->fbo);
     glDisable(GL_SCISSOR_TEST);
     if (clearBits & C3D_CLEAR_COLOR)
@@ -1122,6 +1200,7 @@ bool C3D_FrameDrawOn(C3D_RenderTarget *target)
     if (!target)
         return false;
     sDrawOn = target;
+    GlForget();
     glBindFramebuffer(GL_FRAMEBUFFER, target->fbo);
     C3D_SetViewport(0, 0, (u32)target->width, (u32)target->height);
     return true;
@@ -1143,6 +1222,10 @@ typedef struct
     FragKey key;
     GLuint program;
     GLint uC, uDepth, uConst, uBufColor, uAlphaRef, uTex[3];
+    /* Its uniforms as last uploaded (a program keeps them): only what
+     * changed is sent again. */
+    bool uploaded;
+    float unif[96][4], depth[2], consts[6][4], buf[4], alphaRef;
 } Program;
 
 static Program sPrograms[MAX_PROGRAMS];
@@ -1372,6 +1455,8 @@ static Program *ProgramFor(int vertex, const FragKey *key)
     p->vertex = vertex;
     p->key = *key;
     p->program = prog;
+    p->uploaded = false;
+    sGl.program = 0; /* linking used it below: glUseProgram */
     p->uC = glGetUniformLocation(prog, "c");
     p->uDepth = glGetUniformLocation(prog, "uDepth");
     p->uConst = glGetUniformLocation(prog, "uConst");
@@ -1393,6 +1478,87 @@ static Program *ProgramFor(int vertex, const FragKey *key)
 static GLuint sVao, sStream, sIndexStream;
 static size_t sStreamAt, sIndexAt;
 static unsigned sDraws, sStreamBytes;
+
+/*
+ * The streams as rings mapped once (GL_EXT_buffer_storage), where the
+ * drivers have it: mapping a buffer for every draw, as below, cost as much as
+ * the draw itself. A ring is four segments, each fenced as it is left and
+ * waited for when it comes round again, so nothing the GPU has yet to read is
+ * written over (a lap is some 30 frames of a town).
+ */
+#define RING_SEGMENTS 4
+typedef struct
+{
+    GLuint buffer;
+    uint8_t *base;
+    size_t capacity, at;
+    unsigned segment;
+    GLsync fence[RING_SEGMENTS];
+} Ring;
+static Ring sVertexRing, sIndexRing;
+static PFNGLBUFFERSTORAGEEXTPROC sBufferStorage;
+
+static bool RingInit(Ring *r, GLenum target, GLuint buffer, size_t capacity)
+{
+    const GLbitfield flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT_EXT | GL_MAP_COHERENT_BIT_EXT;
+
+    memset(r, 0, sizeof(*r));
+    if (!sBufferStorage)
+        return false;
+    glBindBuffer(target, buffer);
+    sBufferStorage(target, (GLsizeiptr)capacity, NULL, flags);
+    r->base = glMapBufferRange(target, 0, (GLsizeiptr)capacity, flags);
+    if (!r->base || glGetError() != GL_NO_ERROR)
+    {
+        r->base = NULL;
+        return false;
+    }
+    r->buffer = buffer;
+    r->capacity = capacity;
+    return true;
+}
+
+static void RingLeave(Ring *r, unsigned segment)
+{
+    if (r->fence[segment])
+        glDeleteSync(r->fence[segment]);
+    r->fence[segment] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+}
+
+static void RingEnter(Ring *r, unsigned segment)
+{
+    if (!r->fence[segment])
+        return;
+    glClientWaitSync(r->fence[segment], GL_SYNC_FLUSH_COMMANDS_BIT, 200000000ull);
+    glDeleteSync(r->fence[segment]);
+    r->fence[segment] = 0;
+}
+
+static void *RingAlloc(Ring *r, size_t bytes, size_t *offset)
+{
+    size_t size = r->capacity / RING_SEGMENTS;
+    size_t at = (r->at + 63) & ~(size_t)63;
+    unsigned last;
+
+    if (bytes > size)
+        return NULL;
+    if (at + bytes > r->capacity)
+    {
+        RingLeave(r, r->segment);
+        at = 0;
+        r->segment = 0;
+        RingEnter(r, 0);
+    }
+    last = (unsigned)((at + bytes - 1) / size);
+    while (r->segment < last)
+    {
+        RingLeave(r, r->segment);
+        RingEnter(r, ++r->segment);
+    }
+    *offset = at;
+    r->at = at + bytes;
+    return r->base + at;
+}
 
 static void *StreamAlloc(GLenum target, GLuint buffer, size_t *at, size_t capacity, size_t bytes, size_t *offset)
 {
@@ -1470,10 +1636,23 @@ static bool PrepareDraw(void)
     for (int u = 0; u < 3; ++u)
         if (BOUND[u] && BOUND[u]->data)
             key.textures |= (u8)(1 << u);
-    p = ProgramFor(sState.program->vertexShader->dvle->program, &key);
+    {
+        /* The draw before's program, most of the time. */
+        static Program *last;
+        int vertex = sState.program->vertexShader->dvle->program;
+
+        if (last != NULL && last->vertex == vertex && memcmp(&last->key, &key, sizeof(key)) == 0)
+            p = last;
+        else
+            p = last = ProgramFor(vertex, &key);
+    }
     if (!p)
         return false;
-    glUseProgram(p->program);
+    if (sGl.program != p->program)
+    {
+        glUseProgram(p->program);
+        sGl.program = p->program;
+    }
     for (int i = 0; i < UNIFORMS; ++i)
     {
         const C3D_FVec *v = &sState.unif[i];
@@ -1482,60 +1661,147 @@ static bool PrepareDraw(void)
         unif[i][2] = v->z;
         unif[i][3] = v->w;
     }
-    glUniform4fv(p->uC, UNIFORMS, &unif[0][0]);
-    glUniform2f(p->uDepth, sState.depthScale, sState.depthOffset);
-    if (p->uConst >= 0) glUniform4fv(p->uConst, 6, &consts[0][0]);
+    if (!p->uploaded || memcmp(p->unif, unif, sizeof(unif)) != 0)
+    {
+        glUniform4fv(p->uC, UNIFORMS, &unif[0][0]);
+        memcpy(p->unif, unif, sizeof(unif));
+    }
+    if (!p->uploaded || p->depth[0] != sState.depthScale || p->depth[1] != sState.depthOffset)
+    {
+        glUniform2f(p->uDepth, sState.depthScale, sState.depthOffset);
+        p->depth[0] = sState.depthScale;
+        p->depth[1] = sState.depthOffset;
+    }
+    if (p->uConst >= 0 && (!p->uploaded || memcmp(p->consts, consts, sizeof(consts)) != 0))
+    {
+        glUniform4fv(p->uConst, 6, &consts[0][0]);
+        memcpy(p->consts, consts, sizeof(consts));
+    }
     Unpack(sState.bufColor, buf);
-    if (p->uBufColor >= 0) glUniform4fv(p->uBufColor, 1, buf);
-    if (p->uAlphaRef >= 0) glUniform1f(p->uAlphaRef, (float)sState.alphaRef);
+    if (p->uBufColor >= 0 && (!p->uploaded || memcmp(p->buf, buf, sizeof(buf)) != 0))
+    {
+        glUniform4fv(p->uBufColor, 1, buf);
+        memcpy(p->buf, buf, sizeof(buf));
+    }
+    if (p->uAlphaRef >= 0 && (!p->uploaded || p->alphaRef != (float)sState.alphaRef))
+    {
+        glUniform1f(p->uAlphaRef, (float)sState.alphaRef);
+        p->alphaRef = (float)sState.alphaRef;
+    }
+    p->uploaded = true;
     for (int u = 0; u < 3; ++u)
         if (key.textures & (1 << u))
-        {
-            glActiveTexture(GL_TEXTURE0 + u);
-            PrepareTexture(BOUND[u]);
-        }
-    glActiveTexture(GL_TEXTURE0);
+            PrepareTextureOn(BOUND[u], (unsigned)u);
+    /* Unit 0 left active, as the video's own draws expect. */
+    ActiveUnit(0);
 
-    glViewport((GLint)sState.viewport[0], (GLint)sState.viewport[1], (GLsizei)sState.viewport[2], (GLsizei)sState.viewport[3]);
+    {
+        GLint vp[4] = {(GLint)sState.viewport[0], (GLint)sState.viewport[1], (GLint)sState.viewport[2],
+                       (GLint)sState.viewport[3]};
+        if (!sGl.valid || memcmp(sGl.viewport, vp, sizeof(vp)) != 0)
+        {
+            glViewport(vp[0], vp[1], vp[2], vp[3]);
+            memcpy(sGl.viewport, vp, sizeof(vp));
+        }
+    }
     if (sState.scissorMode == GPU_SCISSOR_NORMAL)
     {
         /* The PICA's scissor is in the framebuffer's own rows, as GL's. */
-        glEnable(GL_SCISSOR_TEST);
-        glScissor((GLint)sState.scissor[0], (GLint)sState.scissor[1],
-                  (GLsizei)(sState.scissor[2] - sState.scissor[0]), (GLsizei)(sState.scissor[3] - sState.scissor[1]));
+        GLint sc[4] = {(GLint)sState.scissor[0], (GLint)sState.scissor[1],
+                       (GLint)(sState.scissor[2] - sState.scissor[0]), (GLint)(sState.scissor[3] - sState.scissor[1])};
+        if (!sGl.valid || !sGl.scissorOn)
+            glEnable(GL_SCISSOR_TEST);
+        if (!sGl.valid || !sGl.scissorOn || memcmp(sGl.scissor, sc, sizeof(sc)) != 0)
+        {
+            glScissor(sc[0], sc[1], sc[2], sc[3]);
+            memcpy(sGl.scissor, sc, sizeof(sc));
+        }
+        sGl.scissorOn = true;
     }
-    else
+    else if (!sGl.valid || sGl.scissorOn)
+    {
         glDisable(GL_SCISSOR_TEST);
-    glColorMask((sState.writeMask & 1) != 0, (sState.writeMask & 2) != 0, (sState.writeMask & 4) != 0,
-                (sState.writeMask & 8) != 0);
+        sGl.scissorOn = false;
+    }
+    if (!sGl.valid || sGl.colorMask != (u8)(sState.writeMask & 15))
+    {
+        glColorMask((sState.writeMask & 1) != 0, (sState.writeMask & 2) != 0, (sState.writeMask & 4) != 0,
+                    (sState.writeMask & 8) != 0);
+        sGl.colorMask = (u8)(sState.writeMask & 15);
+    }
     if (sState.depthTest)
     {
-        glEnable(GL_DEPTH_TEST);
-        glDepthFunc(GlTest(sState.depthFunc));
-        glDepthMask((sState.writeMask & GPU_WRITE_DEPTH) != 0);
+        GLenum func = GlTest(sState.depthFunc);
+        bool mask = (sState.writeMask & GPU_WRITE_DEPTH) != 0;
+
+        if (!sGl.valid || !sGl.depthTest)
+            glEnable(GL_DEPTH_TEST);
+        if (!sGl.valid || !sGl.depthTest || sGl.depthFunc != func)
+            glDepthFunc(func);
+        if (!sGl.valid || !sGl.depthTest || sGl.depthMask != mask)
+            glDepthMask(mask);
+        sGl.depthTest = true;
+        sGl.depthFunc = func;
+        sGl.depthMask = mask;
     }
-    else
-        glDisable(GL_DEPTH_TEST);
-    if (sState.cull == GPU_CULL_NONE)
-        glDisable(GL_CULL_FACE);
-    else
+    else if (!sGl.valid || sGl.depthTest)
     {
-        glEnable(GL_CULL_FACE);
-        glFrontFace(GL_CCW);
-        glCullFace(sState.cull == GPU_CULL_FRONT_CCW ? GL_FRONT : GL_BACK);
+        glDisable(GL_DEPTH_TEST);
+        sGl.depthTest = false;
+    }
+    {
+        GLenum cull = sState.cull == GPU_CULL_NONE ? 0 : sState.cull == GPU_CULL_FRONT_CCW ? GL_FRONT : GL_BACK;
+
+        if (!sGl.valid || sGl.cull != cull)
+        {
+            if (cull == 0)
+                glDisable(GL_CULL_FACE);
+            else
+            {
+                if (!sGl.valid || sGl.cull == 0)
+                {
+                    glEnable(GL_CULL_FACE);
+                    glFrontFace(GL_CCW);
+                }
+                glCullFace(cull);
+            }
+            sGl.cull = cull;
+        }
     }
     if (sState.blend)
     {
-        float bc[4];
-        glEnable(GL_BLEND);
-        glBlendEquationSeparate(GlEquation(sState.blendEq[0]), GlEquation(sState.blendEq[1]));
-        glBlendFuncSeparate(GlBlendFactor(sState.blendFactor[0]), GlBlendFactor(sState.blendFactor[1]),
-                            GlBlendFactor(sState.blendFactor[2]), GlBlendFactor(sState.blendFactor[3]));
-        Unpack(sState.blendColor, bc);
-        glBlendColor(bc[0], bc[1], bc[2], bc[3]);
+        GLenum eq[2] = {GlEquation(sState.blendEq[0]), GlEquation(sState.blendEq[1])};
+        GLenum f[4] = {GlBlendFactor(sState.blendFactor[0]), GlBlendFactor(sState.blendFactor[1]),
+                       GlBlendFactor(sState.blendFactor[2]), GlBlendFactor(sState.blendFactor[3])};
+        bool was = sGl.valid && sGl.blend;
+
+        if (!was)
+            glEnable(GL_BLEND);
+        if (!was || memcmp(sGl.blendEq, eq, sizeof(eq)) != 0)
+        {
+            glBlendEquationSeparate(eq[0], eq[1]);
+            memcpy(sGl.blendEq, eq, sizeof(eq));
+        }
+        if (!was || memcmp(sGl.blendFactor, f, sizeof(f)) != 0)
+        {
+            glBlendFuncSeparate(f[0], f[1], f[2], f[3]);
+            memcpy(sGl.blendFactor, f, sizeof(f));
+        }
+        if (!was || sGl.blendColor != sState.blendColor)
+        {
+            float bc[4];
+            Unpack(sState.blendColor, bc);
+            glBlendColor(bc[0], bc[1], bc[2], bc[3]);
+            sGl.blendColor = sState.blendColor;
+        }
+        sGl.blend = true;
     }
-    else
+    else if (!sGl.valid || sGl.blend)
+    {
         glDisable(GL_BLEND);
+        sGl.blend = false;
+    }
+    sGl.valid = true;
     return true;
 }
 
@@ -1556,9 +1822,13 @@ static GLenum FormatGl(int format)
 static bool BindVertices(unsigned first, unsigned count)
 {
     const C3D_AttrInfo *attr = &sState.attr;
-    bool loaded[16] = {false};
+    u16 on = 0;
 
-    glBindVertexArray(sVao);
+    if (sGl.vao != sVao)
+    {
+        glBindVertexArray(sVao);
+        sGl.vao = sVao;
+    }
     for (int b = 0; b < sState.buf.bufCount; ++b)
     {
         const C3D_BufCfg *cfg = &sState.buf.buffers[b];
@@ -1567,11 +1837,26 @@ static bool BindVertices(unsigned first, unsigned count)
 
         if (!cfg->data || bytes == 0)
             continue;
-        dst = StreamAlloc(GL_ARRAY_BUFFER, sStream, &sStreamAt, STREAM_BYTES, bytes, &at);
-        if (!dst)
-            return false;
-        memcpy(dst, (const uint8_t *)cfg->data + (size_t)first * cfg->stride, bytes);
-        glUnmapBuffer(GL_ARRAY_BUFFER);
+        if (sGl.arrayBuffer != sStream)
+        {
+            glBindBuffer(GL_ARRAY_BUFFER, sStream);
+            sGl.arrayBuffer = sStream;
+        }
+        if (sVertexRing.base)
+        {
+            dst = RingAlloc(&sVertexRing, bytes, &at);
+            if (!dst)
+                return false;
+            memcpy(dst, (const uint8_t *)cfg->data + (size_t)first * cfg->stride, bytes);
+        }
+        else
+        {
+            dst = StreamAlloc(GL_ARRAY_BUFFER, sStream, &sStreamAt, STREAM_BYTES, bytes, &at);
+            if (!dst)
+                return false;
+            memcpy(dst, (const uint8_t *)cfg->data + (size_t)first * cfg->stride, bytes);
+            glUnmapBuffer(GL_ARRAY_BUFFER);
+        }
         sStreamBytes += (unsigned)bytes;
         for (u32 i = 0; i < cfg->attribCount; ++i)
         {
@@ -1586,24 +1871,42 @@ static bool BindVertices(unsigned first, unsigned count)
             unsigned elem = FormatBytes(attr->format[code]);
             offset = (offset + elem - 1) & ~(size_t)(elem - 1);
             unsigned reg = attr->reg[code];
-            glEnableVertexAttribArray(reg);
+            if (!(sAttribOn & (1u << reg)))
+                glEnableVertexAttribArray(reg);
             glVertexAttribPointer(reg, attr->count[code], FormatGl(attr->format[code]), GL_FALSE,
                                   (GLsizei)cfg->stride, (const void *)(at + offset));
-            loaded[reg] = true;
+            on |= (u16)(1u << reg);
             offset += (size_t)elem * attr->count[code];
         }
     }
     for (unsigned reg = 0; reg < 12; ++reg)
-        if (!loaded[reg])
+        if (!(on & (1u << reg)))
         {
-            glDisableVertexAttribArray(reg);
-            glVertexAttrib4f(reg, 0.0f, 0.0f, 0.0f, 1.0f);
+            static const float zero[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+
+            if (sAttribOn & (1u << reg))
+                glDisableVertexAttribArray(reg);
+            if (!sGl.constKnown[reg] || memcmp(sGl.constValue[reg], zero, sizeof(zero)) != 0)
+            {
+                glVertexAttrib4f(reg, 0.0f, 0.0f, 0.0f, 1.0f);
+                memcpy(sGl.constValue[reg], zero, sizeof(zero));
+                sGl.constKnown[reg] = true;
+            }
         }
+    sAttribOn = on;
     for (int i = 0; i < attr->attrCount; ++i)
         if (attr->fixed[i])
         {
-            const C3D_FVec *v = &sState.fixed[attr->reg[i] % 12u];
-            glVertexAttrib4f(attr->reg[i], v->x, v->y, v->z, v->w);
+            unsigned reg = attr->reg[i] % 12u;
+            const C3D_FVec *v = &sState.fixed[reg];
+            float value[4] = {v->x, v->y, v->z, v->w};
+
+            if (!sGl.constKnown[reg] || memcmp(sGl.constValue[reg], value, sizeof(value)) != 0)
+            {
+                glVertexAttrib4f(attr->reg[i], v->x, v->y, v->z, v->w);
+                memcpy(sGl.constValue[reg], value, sizeof(value));
+                sGl.constKnown[reg] = true;
+            }
         }
     return true;
 }
@@ -1641,11 +1944,22 @@ void C3D_DrawElements(GPU_Primitive_t primitive, int count, int type, const void
     }
     if (!PrepareDraw() || !BindVertices(0, last + 1))
         return;
-    dst = StreamAlloc(GL_ELEMENT_ARRAY_BUFFER, sIndexStream, &sIndexAt, INDEX_BYTES, bytes, &at);
-    if (!dst)
-        return;
-    memcpy(dst, indices, bytes);
-    glUnmapBuffer(GL_ELEMENT_ARRAY_BUFFER);
+    if (sIndexRing.base)
+    {
+        /* The VAO keeps its index buffer: bound once, at AndroidC3D_Init. */
+        dst = RingAlloc(&sIndexRing, bytes, &at);
+        if (!dst)
+            return;
+        memcpy(dst, indices, bytes);
+    }
+    else
+    {
+        dst = StreamAlloc(GL_ELEMENT_ARRAY_BUFFER, sIndexStream, &sIndexAt, INDEX_BYTES, bytes, &at);
+        if (!dst)
+            return;
+        memcpy(dst, indices, bytes);
+        glUnmapBuffer(GL_ELEMENT_ARRAY_BUFFER);
+    }
     glDrawElements(Primitive(primitive), count, type == C3D_UNSIGNED_SHORT ? GL_UNSIGNED_SHORT : GL_UNSIGNED_BYTE,
                    (const void *)at);
     ++sDraws;
@@ -1661,21 +1975,45 @@ bool AndroidC3D_Init(void)
     sState.depthOffset = 0.0f;
     sState.writeMask = GPU_WRITE_ALL;
     sState.depthFunc = GPU_GREATER;
+    GlForget();
+    sAttribOn = 0;
+    {
+        const char *ext = (const char *)glGetString(GL_EXTENSIONS);
+        sBufferStorage = ext && strstr(ext, "GL_EXT_buffer_storage")
+                       ? (PFNGLBUFFERSTORAGEEXTPROC)eglGetProcAddress("glBufferStorageEXT") : NULL;
+    }
     glGenVertexArrays(1, &sVao);
     glBindVertexArray(sVao);
     glGenBuffers(1, &sStream);
-    glBindBuffer(GL_ARRAY_BUFFER, sStream);
-    glBufferData(GL_ARRAY_BUFFER, STREAM_BYTES, NULL, GL_STREAM_DRAW);
     glGenBuffers(1, &sIndexStream);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sIndexStream);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, INDEX_BYTES, NULL, GL_STREAM_DRAW);
+    if (!RingInit(&sVertexRing, GL_ARRAY_BUFFER, sStream, STREAM_BYTES))
+    {
+        glBindBuffer(GL_ARRAY_BUFFER, sStream);
+        glBufferData(GL_ARRAY_BUFFER, STREAM_BYTES, NULL, GL_STREAM_DRAW);
+    }
+    /* The index buffer is the VAO's: bound with it bound. */
+    if (!RingInit(&sIndexRing, GL_ELEMENT_ARRAY_BUFFER, sIndexStream, INDEX_BYTES))
+    {
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sIndexStream);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, INDEX_BYTES, NULL, GL_STREAM_DRAW);
+    }
     glBindVertexArray(0);
     sStreamAt = sIndexAt = 0;
+    CtrLog_Write(CTR_LOG_VIDEO, "C3D: vertex streams %s", sVertexRing.base && sIndexRing.base
+                 ? "mapped once (EXT_buffer_storage)" : "mapped per draw");
     return glGetError() == GL_NO_ERROR;
 }
 
 void AndroidC3D_Shutdown(void)
 {
+    for (unsigned i = 0; i < RING_SEGMENTS; ++i)
+    {
+        if (sVertexRing.fence[i]) glDeleteSync(sVertexRing.fence[i]);
+        if (sIndexRing.fence[i]) glDeleteSync(sIndexRing.fence[i]);
+    }
+    memset(&sVertexRing, 0, sizeof(sVertexRing));
+    memset(&sIndexRing, 0, sizeof(sIndexRing));
+    GlForget();
     for (unsigned i = 0; i < sProgramCount; ++i)
         glDeleteProgram(sPrograms[i].program);
     sProgramCount = sProgramNext = 0;
@@ -1692,7 +2030,9 @@ void AndroidC3D_ResetState(void)
 {
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glActiveTexture(GL_TEXTURE0);
     sDrawOn = NULL;
+    GlForget();
 }
 
 void AndroidC3D_FrameStats(unsigned *draws, unsigned *vertexBytes, unsigned *texelUploads)

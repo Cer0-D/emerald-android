@@ -33,6 +33,9 @@ from pathlib import Path
 # external count; little endian, as on the console.
 HEADER = struct.Struct("<4sIIIII")
 VERSION = 1
+# Version 2 (an arm64 library's game data): then the counts of 8-byte
+# internal and external sites, and those lists after the 4-byte ones.
+HEADER_V2_EXTRA = struct.Struct("<II")
 REFERENCE_SYMBOL = "AgbMain"
 
 
@@ -42,6 +45,16 @@ def tool(name: str) -> str:
         if candidate.exists():
             return str(candidate)
     return name
+
+
+def elf_tool(name: str) -> str:
+    """A tool for the linked executable or library: the NDK's LLVM one when
+    the Android build names it (CTR_LLVM_BIN) - binutils for ARM cannot read
+    an arm64 library - devkitARM's otherwise."""
+    llvm = os.environ.get("CTR_LLVM_BIN")
+    if llvm:
+        return str(Path(llvm) / ("llvm-" + name))
+    return tool("arm-none-eabi-" + name)
 
 
 def defined_symbols(obj: Path) -> dict[str, int]:
@@ -64,7 +77,7 @@ def defined_symbols(obj: Path) -> dict[str, int]:
 
 
 def elf_symbols(elf: Path) -> dict[str, int]:
-    out = subprocess.check_output([tool("arm-none-eabi-readelf"), "--wide", "--symbols", str(elf)],
+    out = subprocess.check_output([elf_tool("readelf"), "--wide", "--symbols", str(elf)],
                                   text=True, errors="ignore")
     result: dict[str, int] = {}
     # A shared library built with hidden visibility (the Android port) has
@@ -213,7 +226,10 @@ class Bundle:
                  "\t.align 2",
                  "\t.global %s" % keep_symbol,
                  "%s:" % keep_symbol]
-        lines += ["\t.4byte %s" % name for name in sorted(wanted)]
+        # An arm64 library takes no 32-bit address outside its game data: the
+        # table holds 8-byte pointers there (android_port/tools/elf32to64.py).
+        entry = "\t.int %s, 0" if os.environ.get("CTR_PTR64") == "1" else "\t.4byte %s"
+        lines += [entry % name for name in sorted(wanted)]
         lines += ["\t.global %s_end" % keep_symbol, "%s_end:" % keep_symbol, ""]
         out_asm.write_text("\n".join(lines), encoding="ascii", newline="\n")
         print("%s: %d handlers kept -> %s" % (self.tag, len(wanted), out_asm))

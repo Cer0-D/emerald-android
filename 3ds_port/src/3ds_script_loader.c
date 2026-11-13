@@ -23,6 +23,9 @@
 #include "3ds_data.h"
 
 #define BUNDLE_VERSION 1
+/* An arm64 library's game data also holds 8-byte pointers (the C units'):
+ * version 2 adds their two lists after the 4-byte ones. */
+#define BUNDLE_VERSION_WIDE 2
 
 #define SCRIPT_BUNDLE_PATH "scripts/scripts.bin"
 #define SCRIPT_RELOC_PATH "romfs:/scripts/scripts.rel"
@@ -50,6 +53,12 @@ struct BundleHeader
     u32 referenceAddress;
     u32 internalCount;
     u32 externalCount;
+};
+
+struct BundleHeaderWide
+{
+    u32 internal64Count;
+    u32 external64Count;
 };
 
 static u32 sScriptBytes;
@@ -96,16 +105,30 @@ static void WriteSite(u8 *at, u32 value)
     memcpy(at, &value, sizeof(value));
 }
 
+static void WriteSite64(u8 *at, uint64_t value)
+{
+    memcpy(at, &value, sizeof(value));
+}
+
+static uint64_t ReadSite64(const u8 *at)
+{
+    uint64_t value;
+
+    memcpy(&value, at, sizeof(value));
+    return value;
+}
+
 static bool LoadBundle(const char *what, const char *payloadPath, const char *relocPath,
                        u32 magic, u8 *blob, const u8 *blobEnd, u32 *outBytes)
 {
     u32 region = (u32)(blobEnd - blob);
     struct BundleHeader header;
+    struct BundleHeaderWide wide = {0, 0};
     u8 *relocs = NULL;
     FILE *payload = NULL;
-    u32 payloadBytes = 0, relocBytes = 0, i;
+    u32 payloadBytes = 0, relocBytes = 0, i, headerBytes = sizeof(header);
     const u32 *sites;
-    u32 delta;
+    uintptr_t delta;
 
     relocs = ReadFile(relocPath, &relocBytes);
     if (relocs == NULL || !CtrData_Size(payloadPath, &payloadBytes))
@@ -119,9 +142,16 @@ static bool LoadBundle(const char *what, const char *payloadPath, const char *re
         goto fail;
     }
     memcpy(&header, relocs, sizeof(header));
-    if (header.magic != magic || header.version != BUNDLE_VERSION
+    if (header.version == BUNDLE_VERSION_WIDE && relocBytes >= sizeof(header) + sizeof(wide))
+    {
+        memcpy(&wide, relocs + sizeof(header), sizeof(wide));
+        headerBytes += sizeof(wide);
+    }
+    if (header.magic != magic
+     || (header.version != BUNDLE_VERSION && header.version != BUNDLE_VERSION_WIDE)
      || header.payloadBytes != payloadBytes || payloadBytes != region
-     || (uint64_t)relocBytes != sizeof(header) + 4ull * ((uint64_t)header.internalCount + header.externalCount))
+     || (uint64_t)relocBytes != headerBytes + 4ull * ((uint64_t)header.internalCount + header.externalCount
+                                                     + wide.internal64Count + wide.external64Count))
     {
         PORT_LOG("[ERROR] %s bundle does not match this executable "
                 "(payload %lu, region %lu)\n",
@@ -141,14 +171,14 @@ static bool LoadBundle(const char *what, const char *payloadPath, const char *re
 
     /* Everything the bundle knows about the executable was recorded at link
      * time; one symbol is enough to learn where the image actually landed. */
-    delta = (u32)(uintptr_t)AgbMain - header.referenceAddress;
+    delta = (uintptr_t)AgbMain - header.referenceAddress;
 #ifdef PLATFORM_ANDROID
     /* A shared library moves as a whole: AgbMain lands exactly the load bias
      * from where the link put it. Anything else is data from another link,
      * which would relocate every pointer to the wrong place. */
     {
         extern const char __ehdr_start[];
-        if (delta != (u32)(uintptr_t)__ehdr_start)
+        if (delta != (uintptr_t)__ehdr_start)
         {
             PORT_LOG("[ERROR] %s bundle was made for another build of the library "
                      "(AgbMain at %08lX, here %08lX)\n", what,
@@ -158,8 +188,15 @@ static bool LoadBundle(const char *what, const char *payloadPath, const char *re
         }
     }
 #endif
+    /* A 4-byte site holds the whole address only below 4 GiB, where the
+     * arm64 build loads the library (android_boot.c). */
+    if ((uintptr_t)blobEnd > 0xFFFFFFFFu && (header.internalCount || header.externalCount))
+    {
+        PORT_LOG("[ERROR] %s: the library is above 4 GiB, its 32-bit addresses cannot reach it\n", what);
+        goto fail;
+    }
 
-    sites = (const u32 *)(relocs + sizeof(header));
+    sites = (const u32 *)(relocs + headerBytes);
     for (i = 0; i < header.internalCount; i++)
     {
         u32 site = sites[i];
@@ -175,14 +212,33 @@ static bool LoadBundle(const char *what, const char *payloadPath, const char *re
 
         if (site > region || region - site < 4)
             goto badSite;
-        WriteSite(blob + site, ReadSite(blob + site) + delta);
+        WriteSite(blob + site, ReadSite(blob + site) + (u32)delta);
+    }
+    sites += header.externalCount;
+    for (i = 0; i < wide.internal64Count; i++)
+    {
+        u32 site = sites[i];
+
+        if (site > region || region - site < 8)
+            goto badSite;
+        WriteSite64(blob + site, (uintptr_t)blob + ReadSite64(blob + site));
+    }
+    sites += wide.internal64Count;
+    for (i = 0; i < wide.external64Count; i++)
+    {
+        u32 site = sites[i];
+
+        if (site > region || region - site < 8)
+            goto badSite;
+        WriteSite64(blob + site, ReadSite64(blob + site) + delta);
     }
 
     free(relocs);
     *outBytes = payloadBytes;
-    PORT_LOG("[FS] %s: %lu KiB in place, %lu internal + %lu external relocs, rebase %ld\n",
+    PORT_LOG("[FS] %s: %lu KiB in place, %lu internal + %lu external relocs (+ %lu + %lu 64-bit), rebase %ld\n",
             what, (unsigned long)(payloadBytes >> 10), (unsigned long)header.internalCount,
-            (unsigned long)header.externalCount, (long)delta);
+            (unsigned long)header.externalCount, (unsigned long)wide.internal64Count,
+            (unsigned long)wide.external64Count, (long)delta);
     return true;
 
 badSite:

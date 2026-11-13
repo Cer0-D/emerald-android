@@ -30,6 +30,7 @@ import argparse
 import bisect
 import struct
 import sys
+import os
 import time
 import zlib
 from pathlib import Path
@@ -61,12 +62,27 @@ SEARCH_STRIDE = 4
 
 
 def pointer_mask(romfs: Path, payload: str, size: int) -> bytearray:
+    """The bytes of a payload that are pointers into the executable, set.
+
+    Version 1 relocation lists (3ds_port/scripts/ctr_bundle.py) hold 4-byte
+    sites; version 2 (an arm64 library's game data, gen_gamedata_bundle.py)
+    adds the counts of 8-byte ones to the header and their lists after."""
     mask = bytearray(size)
     rel = (romfs / BUNDLES[payload]).read_bytes()
-    _, _, _, _, internal, external = struct.unpack_from("<4sIIIII", rel, 0)
-    sites = struct.unpack_from("<%dI" % (internal + external), rel, 24)
-    for site in sites:
-        mask[site:site + 4] = b"\1\1\1\1"
+    _, version, _, _, internal, external = struct.unpack_from("<4sIIIII", rel, 0)
+    at = 24
+    wide = 0
+    if version == 2:
+        internal64, external64 = struct.unpack_from("<II", rel, at)
+        at += 8
+        wide = internal64 + external64
+    elif version != 1:
+        raise SystemExit("gen_recipe: %s: relocation list version %d" % (BUNDLES[payload], version))
+    narrow = internal + external
+    sites = struct.unpack_from("<%dI" % (narrow + wide), rel, at)
+    for k, site in enumerate(sites):
+        width = 4 if k < narrow else 8
+        mask[site:site + width] = b"\1" * width
     return mask
 
 
@@ -540,6 +556,46 @@ def match_len(a: memoryview, i: int, b: memoryview, j: int, limit: int) -> int:
     return length
 
 
+class Progress:
+    """A line every few seconds while the files are covered: how many, how
+    many bytes, how long so far and (by bytes) how long still to go - and,
+    inside one long file, how far into it."""
+
+    EVERY = 5.0
+
+    def __init__(self, files: int, total: int):
+        self.files, self.total = files, total
+        self.done_files = self.done_bytes = 0
+        self.start = self.last = time.time()
+
+    @staticmethod
+    def clock(seconds: float) -> str:
+        return "%dm%02ds" % (seconds // 60, seconds % 60)
+
+    def show(self, current: str = "", into: int = 0, size: int = 0, force: bool = False):
+        now = time.time()
+        if not force and now - self.last < self.EVERY:
+            return
+        self.last = now
+        done = self.done_bytes + into
+        spent = now - self.start
+        line = "gen_recipe: %d/%d files, %d/%d KiB (%d%%), %s" % (
+            self.done_files, self.files, done >> 10, self.total >> 10, 100 * done // max(self.total, 1),
+            self.clock(spent))
+        # An estimate only once a fifth is done: the largest files go first,
+        # each counted whole only when it ends.
+        if self.total // 5 <= done < self.total:
+            line += ", ~%s left" % self.clock(spent * (self.total - done) / done)
+        if current and size:
+            line += " - %s %d%%" % (current, 100 * into // size)
+        print(line, flush=True)
+
+    def file_done(self, size: int):
+        self.done_files += 1
+        self.done_bytes += size
+        self.show()
+
+
 class Cover:
     def __init__(self, rom: bytes):
         self.rom = rom
@@ -548,6 +604,89 @@ class Cover:
         self.bitmaps: list[list[int]] = []
         self.bitmap_ids: dict[tuple, int] = {}
         self.windows: dict[bytes, int] | None = None
+        self.prefixes: tuple | None = None
+        self.searched: dict[bytes, int] = {}  # pattern -> rom.find(pattern)
+
+    # Whether the ROM holds some 8 (or 4) bytes anywhere: a bit per hash of
+    # every 8-byte and every 4-byte window of it (2^28 bits, 32 MiB each, a
+    # few % set). A stretch of the ROM holds each 8 bytes of it, so a search
+    # for bytes of which some 8 are nowhere in the ROM is skipped (possible) -
+    # a full scan of the ROM, 7-15 ms, for nothing; the arm64 game data asked
+    # for thousands of them (20 minutes and more). Only searches that would
+    # fail are skipped: the recipe is the same.
+    PREFIX_BITS = 28
+
+    FIRST_BITS = 24
+
+    @staticmethod
+    def _table(rom: bytes, size: int, fmt: str, bits: int, first_bits: int) -> tuple:
+        """The bit per hash of every `size`-byte window, and per coarser hash
+        the lowest and the highest ROM offset of a window with it."""
+        from array import array
+        table = bytearray(1 << (bits - 3))
+        first = array("i", [len(rom)]) * (1 << first_bits)
+        last = array("i", [-1]) * (1 << first_bits)
+        shift = (8 * size) - bits
+        coarse = bits - first_bits
+        mul, wrap = (0x9E3779B97F4A7C15, (1 << 64) - 1) if size == 8 else (0x9E3779B1, (1 << 32) - 1)
+        view = memoryview(rom)
+        for align in range(size):
+            # Every window starting at align, align + size...: one word each.
+            usable = (len(rom) - align) // size * size
+            off = align
+            for word in view[align:align + usable].cast(fmt):
+                h = ((word * mul) & wrap) >> shift
+                table[h >> 3] |= 1 << (h & 7)
+                c = h >> coarse
+                if off < first[c]:
+                    first[c] = off
+                if off > last[c]:
+                    last[c] = off
+                off += size
+        return table, first, last
+
+    def build_prefixes(self) -> None:
+        eight = self._table(self.rom, 8, "Q", self.PREFIX_BITS, self.FIRST_BITS)
+        four = self._table(self.rom, 4, "I", self.PREFIX_BITS, self.FIRST_BITS)
+        self.prefixes = (eight[0], four[0], (eight[1], eight[2]), (four[1], four[2]))
+
+    def where(self, dv: memoryview, i: int, width: int) -> tuple[int, int]:
+        """Where in the ROM the `width` bytes at dv[i] can start, as find's
+        start and end; an empty range when nowhere.
+
+        A stretch of the ROM holding them holds each 8 of them (4, short of
+        8): where one of those is nowhere in the ROM (the bit table), neither
+        are they, and each bounds where they can start - its window's hash
+        group's lowest and highest offsets, less its offset among them. All
+        their windows' bounds together are mostly a few bytes of the ROM: a
+        search there finds what one of the whole ROM does."""
+        if self.prefixes is None:
+            self.build_prefixes()
+        size = 8 if width >= 8 else 4
+        if width < size:
+            return 0, len(self.rom)
+        if size == 8:
+            table, (first, last) = self.prefixes[0], self.prefixes[2]
+            mul, wrap, shift = 0x9E3779B97F4A7C15, (1 << 64) - 1, 64
+        else:
+            table, (first, last) = self.prefixes[1], self.prefixes[3]
+            mul, wrap, shift = 0x9E3779B1, (1 << 32) - 1, 32
+        bits, coarse = shift - self.PREFIX_BITS, self.PREFIX_BITS - self.FIRST_BITS
+        lo, hi = 0, len(self.rom) - width
+        # Every window of a short stretch, of a long one every size-th and the
+        # last; the far end first, where a failed search mostly stops matching.
+        offsets = range(width - size, -1, -1) if width <= 64 else \
+            [width - size] + list(range(0, width - size, size))
+        for o in offsets:
+            h = ((int.from_bytes(dv[i + o:i + o + size], "little") * mul) & wrap) >> bits
+            if not table[h >> 3] >> (h & 7) & 1:
+                return 0, 0
+            c = h >> coarse
+            lo = max(lo, first[c] - o)
+            hi = min(hi, last[c] - o)
+            if lo > hi:
+                return 0, 0
+        return lo, hi + width
 
     WINDOW = 32        # inside a translation's texts the ROM is looked up by
     WINDOW_STRIDE = 8  # sampled windows: any run of 40 bytes it holds is found
@@ -563,7 +702,8 @@ class Cover:
         return self.windows.get(bytes(dv[i:i + self.WINDOW]), -1)
 
     def run(self, data: bytes, mask: bytearray | None, hints: dict[int, int] | None = None,
-            remaps: dict | None = None, breaks: list[int] | None = None, own: bytearray | None = None):
+            remaps: dict | None = None, breaks: list[int] | None = None, own: bytearray | None = None,
+            progress=None):
         """Cover `data`. `hints` maps payload offsets (symbol starts) to the
         ROM offset of the same symbol in the original game; `remaps` maps
         payload offsets to record remaps (see find_remap). The ROM is not
@@ -603,7 +743,11 @@ class Cover:
             stats[kind] += end - start
 
         pending = None  # start of an unexplained literal run
+        next_tick = 1 << 16
         while i < n:
+            if progress is not None and i >= next_tick:
+                progress(i)
+                next_tick = i + (1 << 16)
             if i in remaps:
                 if pending is not None:
                     literal(pending, i, "literal")
@@ -700,7 +844,14 @@ class Cover:
                 for width in widths:
                     width = min(width, seg_end - i) if width > 32 else width
                     if width >= 2 and seg_end - i >= width:
-                        found = self.rom.find(bytes(dv[i:i + width]))
+                        pattern = bytes(dv[i:i + width])
+                        # Game data repeats itself (records alike, strings
+                        # alike): the ROM is searched once for each.
+                        found = self.searched.get(pattern)
+                        if found is None:
+                            lo, hi = self.where(dv, i, width)
+                            found = self.rom.find(pattern, lo, hi) if lo < hi else -1
+                            self.searched[pattern] = found
                         if found >= 0:
                             break
             if found >= 0:
@@ -730,6 +881,65 @@ class Cover:
         return self.bitmap_ids[key]
 
 
+# The files are covered in worker processes, forked so that they share the
+# ROM and the game data's hints and remaps (_SHARED) instead of each being
+# sent a copy. A worker covers a file with a literal pool and bitmap table of
+# its own; the results are taken back in the files' order and their literal
+# offsets and bitmap numbers moved onto the recipe's, which makes the recipe
+# the very one a single process makes (--jobs 1).
+_SHARED: dict = {}
+
+
+def cover_file(job: tuple[int, str, str]) -> dict:
+    index, rel, path = job
+    sh = _SHARED
+    data = Path(path).read_bytes()
+    mask = pointer_mask(sh["romfs"], rel, len(data)) if rel in BUNDLES else None
+    is_gd = rel == "gamedata/gamedata.bin"
+    breaks = layout_breaks(sh["decomp"]) if rel == "maps/layouts.bin" else None
+    own = translation_mask(data, sh["runs"], sh["shorts"]) if sh["runs"] else None
+    cover = Cover(sh["rom"])
+    cover.prefixes = sh["prefixes"]  # (8-byte, 4-byte) tables and first offsets
+    cover.windows = sh["windows"]
+    tick = None
+    if len(data) >= 1 << 20:
+        # A long file reports on its own (gamedata.bin: most of the time).
+        last = [time.time()]
+
+        def tick(into, rel=rel, size=len(data)):
+            if time.time() - last[0] >= Progress.EVERY:
+                last[0] = time.time()
+                print("gen_recipe:    %s %d%%" % (rel, 100 * into // size), flush=True)
+    ops, patches, stats = cover.run(data, mask, sh["hints"] if is_gd else None, sh["remaps"] if is_gd else None,
+                                    breaks, own, tick)
+    if own is not None and stats["literal"]:
+        # The translation's texts among the unexplained literals (pointer sites aside).
+        stats["translation"] = sum(1 for k in literal_positions(ops, sh["rom"]) if own[k] and not (mask and mask[k]))
+        stats["literal"] -= stats["translation"]
+    else:
+        own = None
+    return {"index": index, "size": len(data), "crc": zlib.crc32(data) & 0xFFFFFFFF, "ops": ops,
+            "patches": patches, "stats": stats, "literals": bytes(cover.literals), "bitmaps": cover.bitmaps,
+            "own": own}
+
+
+def merge_into(cover: Cover, result: dict) -> tuple[list, list]:
+    """A worker's operations and patches, moved onto `cover`'s literal pool
+    and bitmap table."""
+    base = len(cover.literals)
+    cover.literals += result["literals"]
+    ops = result["ops"]
+    for op in ops:
+        if op[0] == "L":
+            op[1] += base
+        elif op[0] == "R":
+            op[5] = cover.bitmap_index(result["bitmaps"][op[5]])
+    patches = result["patches"]
+    for patch in patches:
+        patch[1] += base
+    return ops, patches
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--romfs", type=Path, required=True)
@@ -747,6 +957,8 @@ def main() -> None:
     ap.add_argument("--decomp", type=Path, default=ROOT, help="decomp tree for the voxel inputs")
     ap.add_argument("--max-game-literal", type=int, default=4096,
                     help="fail above this many literal bytes of the original game's own objects")
+    ap.add_argument("--jobs", type=int, default=os.cpu_count() or 1,
+                    help="worker processes for the files (1: none; the recipe is the same)")
     ap.add_argument("--translation", type=Path, default=None,
                     help="a fan translation's catalog (tools/locales/pt_br): its texts are not unexplained")
     args = ap.parse_args()
@@ -782,32 +994,55 @@ def main() -> None:
     own_masks: dict[str, bytearray] = {}
     per_file = []
     start = time.time()
-    for rel, path in staging.data_files(args.romfs):
-        data = path.read_bytes()
-        crc = zlib.crc32(data) & 0xFFFFFFFF
+    files = [(rel, path) for rel, path in staging.data_files(args.romfs)]
+    todo = [(rel, path) for rel, path in files if rel not in GENERATED]
+    sizes = {rel: path.stat().st_size for rel, path in todo}
+    progress = Progress(len(todo), sum(sizes.values()))
+    cover.build_prefixes()
+    if runs:
+        cover.window_at(memoryview(bytes(Cover.WINDOW)), 0)  # its index, built once for all
+    _SHARED.update(rom=rom, romfs=args.romfs, decomp=args.decomp, runs=runs, shorts=shorts,
+                   hints=hints, remaps=remaps, prefixes=cover.prefixes, windows=cover.windows)
+    # Largest first, so that the longest file does not start last.
+    jobs = sorted(((k, rel, str(path)) for k, (rel, path) in enumerate(todo)), key=lambda j: -sizes[j[1]])
+    results: list[dict | None] = [None] * len(todo)
+    workers = max(1, min(args.jobs, len(jobs)))
+    print("gen_recipe: covering %d files (%d KiB) in %d process%s"
+          % (len(todo), progress.total >> 10, workers, "es" if workers > 1 else ""), flush=True)
+    if workers == 1:
+        for job in jobs:
+            result = cover_file(job)
+            results[result["index"]] = result
+            progress.file_done(result["size"])
+    else:
+        import multiprocessing
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+        with ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("fork")) as pool:
+            for future in as_completed([pool.submit(cover_file, job) for job in jobs]):
+                result = future.result()
+                results[result["index"]] = result
+                progress.file_done(result["size"])
+    progress.show(force=True)
+    for rel, path in files:
         if rel in GENERATED:
-            out.generated.append({"path": rel, "size": len(data), "crc": crc, "generator": GENERATED[rel]})
-            continue
-        mask = pointer_mask(args.romfs, rel, len(data)) if rel in BUNDLES else None
-        is_gd = rel == "gamedata/gamedata.bin"
-        breaks = layout_breaks(args.decomp) if rel == "maps/layouts.bin" else None
-        own = translation_mask(data, runs, shorts) if runs else None
-        ops, patches, stats = cover.run(data, mask, hints if is_gd else None, remaps if is_gd else None,
-                                        breaks, own)
-        entry = {"path": rel, "size": len(data), "crc": crc, "ops": ops}
+            data = path.read_bytes()
+            out.generated.append({"path": rel, "size": len(data), "crc": zlib.crc32(data) & 0xFFFFFFFF,
+                                  "generator": GENERATED[rel]})
+    for k, (rel, path) in enumerate(todo):
+        result = results[k]
+        ops, patches = merge_into(cover, result)
+        stats = result["stats"]
+        entry = {"path": rel, "size": result["size"], "crc": result["crc"], "ops": ops}
         if patches:
             entry["patches"] = patches
         out.entries.append(entry)
-        if own is not None and stats["literal"]:
-            # The translation's texts among the unexplained literals (pointer sites aside).
-            stats["translation"] = sum(1 for k in literal_positions(ops, rom) if own[k] and not (mask and mask[k]))
-            stats["literal"] -= stats["translation"]
-            own_masks[rel] = own
-        for k in totals:
-            totals[k] += stats.get(k, 0)
+        if result["own"] is not None:
+            own_masks[rel] = result["own"]
+        for key in totals:
+            totals[key] += stats.get(key, 0)
         dom = domains.setdefault(domain_of(rel), {"files": 0, "bytes": 0, "rom": 0, "literal": 0})
         dom["files"] += 1
-        dom["bytes"] += len(data)
+        dom["bytes"] += result["size"]
         dom["rom"] += stats["copy"] + stats["fill"] + stats["remap"]
         dom["literal"] += stats["literal"]
         if stats["literal"]:

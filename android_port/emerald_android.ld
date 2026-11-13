@@ -26,20 +26,35 @@ SECTIONS
 		. = ALIGN(4);
 		__ctr_game_data_end = .;
 	}
-	/* Placed, not left an orphan: one after .gamedata would follow a NOBITS
-	 * section with contents, and the NOLOAD link would gain a segment the
-	 * image does not have - every address moved. .gamedata ends the data. */
-	script_data : { *(script_data) }
+	/* The only script_data linked is the Mystery Event command table's, which
+	 * .gamedata takes (below); the script bytecode is bundled. Another one
+	 * would be an orphan after .gamedata, following a NOBITS section with
+	 * contents: the NOLOAD link would gain a segment the image does not have,
+	 * and gen_gamedata_bundle.py would refuse the two links. */
 	.gamedata ALIGN(32) @GAMEDATA_TYPE@ :
 	{
 		__ctr_gamedata = .;
 		*build/root/src/*(.rodata .rodata.* .data.rel.ro .data.rel.ro.*)
 		*build/root/data/*(.rodata .rodata.* .data.rel.ro .data.rel.ro.*)
+		/* The Mystery Event command table: assembled 32-bit addresses, which
+		 * only the bundle loader fills in on arm64 (android.mk). */
+		*build/root/data/*(script_data)
 		. = ALIGN(4);
 		__ctr_gamedata_end = .;
 	}
 }
 INSERT AFTER .data;
+
+/* arm64's unwind tables (.eh_frame), placed: lld otherwise orders them
+ * against .rodata differently with --emit-relocs, and the two links - which
+ * must lay everything out alike - came out 16 bytes apart. 32-bit ARM unwinds
+ * from .ARM.exidx instead and has little .eh_frame. */
+SECTIONS
+{
+	.eh_frame_hdr : { *(.eh_frame_hdr) }
+	.eh_frame : { KEEP(*(.eh_frame)) }
+}
+INSERT AFTER .rodata;
 
 SECTIONS
 {

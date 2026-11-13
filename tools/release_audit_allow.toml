@@ -34,7 +34,9 @@ paths = [
     # The Android APK (android_port/tools/release.sh). Its native library is
     # the port's code: the game's read-only data is reserved NOLOAD and comes
     # from the data pack (android_port/emerald_android.ld), as on the 3DS.
+    # Still scanned for the ROM's bytes like every file.
     "lib/armeabi-v7a/libemerald.so",
+    "lib/arm64-v8a/libemerald.so",
     # The recipe the app builds the data pack from, unpacked from the release's
     # .recipe (android_port/tools/export_recipe.py): ROM offsets and the
     # literal pool, the precompiled voxel programs included.

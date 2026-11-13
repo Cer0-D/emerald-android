@@ -17,6 +17,27 @@ game on the top screen, and a touch interface on the bottom screen in place of
 the START menu. The optional **voxel overworld** lets you explore Hoenn from a
 new angle, rendered at the device's full resolution.
 
+## What's new in 0.5.0.1
+
+- **Local wireless play over Bluetooth.** Two devices meet in the Pokémon
+  Center's link rooms with no router or internet: Bluetooth LE finds and
+  connects them. Trades and battles are not fully tested yet (see
+  [Local wireless play](#local-wireless-play)).
+- **64-bit (arm64).** The app is now a 64-bit build, so it installs on newer
+  devices that no longer run 32-bit apps. Saves are the same file as before.
+- **Much faster 3D.** The voxel world's drawing costs a fraction of what it
+  did: the busiest places now hold 60 fps where they used to drop to 30.
+- **Day/night lighting fixed.** The outdoor light now follows the clock
+  continuously.
+- **The PokéNav** opens in its window on the bottom screen, as on
+  Emerald 3DS.
+- **FPS counter** on the top screen, an option in the bottom screen's
+  settings, as on Emerald 3DS.
+- **An app icon**: the Emerald 3DS HOME Menu icon.
+
+Updating from 0.5.0 keeps your save, but the app asks for the ROM once more:
+the 64-bit version builds its game data anew.
+
 ## Goal of the project
 
 The goal is to **port everything Emerald 3DS does to Android**. Every feature
@@ -50,8 +71,9 @@ and rebuilds it. Your save is kept.
 
 ### Requirements
 
-- Android 13 or newer, with OpenGL ES 3.0 and 32-bit app support
-  (`armeabi-v7a`).
+- Android 13 or newer, with OpenGL ES 3.0, on a 64-bit ARM device
+  (`arm64-v8a`).
+- Bluetooth LE for local wireless play (optional).
 - **Target device: the [Ayn Thor](https://www.ayntec.com/).** The port is
   developed, laid out and tested on it.
 - **Only dual-screen devices are supported for now**: the bottom screen's
@@ -81,7 +103,8 @@ version yet. ROM hacks are not supported.
 | **Optional voxel overworld** | Modelled buildings, trees, signposts and terrain relief from Emerald 3DS, rendered at the screen's full resolution, with adjustable camera angle and zoom. |
 | **Full-screen presentation** | The intro, title, menus, naming screen, clock and other full-screen scenes fill the whole top screen. |
 | **HD battle interface** | Battles laid out for the wide screen, with optional 3D battles over the voxel world. |
-| **Day/night lighting** | Optional outdoor lighting, lit windows and street lamps, and a faster clock, as in Emerald 3DS (not fully tested on Android yet). |
+| **Day/night lighting** | Optional outdoor lighting, lit windows and street lamps, and a faster clock, as in Emerald 3DS. |
+| **Local wireless play** | The Pokémon Center's link rooms between two devices nearby, over Bluetooth LE: no router, no internet. |
 | **Enhancements** | Physical/special split, IVs and EVs on the summary, infinite TMs, running indoors, Repel prompt, visible wild Pokémon, fast-forward (ZR/ZL) and more, all optional. |
 | **3D SPRITES** *(Android only)* | People and Pokémon in the voxel world drawn 1 to 3 voxels deep instead of flat (OPTION → WORLD → 3D). |
 
@@ -94,6 +117,24 @@ screen and enable **VOXEL 3D** (WORLD → 3D), then adjust **3D ANGLE** and
 > **3D mode is a work in progress** in Emerald 3DS itself: many towns and
 > routes have modelled buildings and relief, but large parts of the map and
 > most interiors are still flat.
+
+### Local wireless play
+
+Two devices with the app play together over Bluetooth, the way two 3DS
+consoles do over local wireless: walk into a Pokémon Center's link rooms on
+both and they find each other. No router or internet is needed, only
+Bluetooth. The first time, the app asks for the **Nearby devices**
+permission, and to turn Bluetooth on if it is off.
+
+Both devices need the **same version** of the app: different versions do not
+link. Going to the background (the home screen, another app) leaves the
+session.
+
+What works so far: both devices join the link rooms, see and walk among each
+other, and leave cleanly, even when one side quits. **Trades, battles and the
+minigames (Berry Blender, Pokémon Jump, Dodrio Berry Picking) are not fully
+tested yet**: they will most likely work, but back up your save before trying
+them.
 
 ## Versioning
 
@@ -112,11 +153,11 @@ What works and what does not yet, compared with Emerald 3DS:
 | Voxel overworld and 3D battles | Working |
 | Sound and music | Working |
 | Fast-forward | Working |
-| Day/night lighting | Ported, currently not working |
+| Day/night lighting | Working |
 | Building the game data in the app | Working (English cartridge) |
 | Other languages (ES, FR, IT, DE, JA, PT-BR) | Not ported yet |
 | Follower Pokémon (HeartGold/SoulSilver sprites) | Not ported yet: the app does not download them |
-| Local wireless play | Not ported yet |
+| Local wireless play (Bluetooth) | Working: link rooms. Trades, battles and minigames not fully tested |
 | Single-screen devices | Not supported yet (planned) |
 | Stereoscopic 3D | Not applicable (New 3DS only) |
 
@@ -148,14 +189,20 @@ make -f ../../../android_port/android.mk -j16 push-data  # the whole game data, 
 make -f ../../../android_port/android.mk -j16 install    # the development APK
 ```
 
-It needs the Android SDK and NDK (`ANDROID_HOME`, default `~/Android/Sdk`)
-and a Python with Pillow in `build/venv`.
+It needs the Android SDK and NDK (`ANDROID_HOME`, default `~/Android/Sdk`),
+a Python with Pillow in `build/venv`, and libclang's Python bindings for the
+system `python3` (the arm64 build's layout check, `android_port/tools/check_overlays.py`).
+A release also needs podman.
 
 A development install reads the game data pushed to the device over adb,
 built from your own ROM by the tree above. A release APK is made with
 `android_port/tools/release.sh ROM.gba`: the library, the engine files and
 the recipe the app builds the game data from, checked by
-`tools/release_audit.py`.
+`tools/release_audit.py`. It reports each step and its time as it goes.
+
+The build is 64-bit (`arm64-v8a`). `ANDROID_ABI=armeabi-v7a` still builds
+the 32-bit library, unsupported; build it in a tree of its own, as the two
+share `build/`.
 
 The [development guide](docs/DEVELOPMENT.md), [architecture](docs/ARCHITECTURE.md)
 and [asset pipeline](docs/ASSET_PIPELINE.md) documents come from Emerald 3DS

@@ -4,7 +4,8 @@
 # elsewhere and passed in, or the step-1 smoke test by default), then
 # zipalign + apksigner: the debug keystore, or the release key (KEYSTORE).
 #
-#   android_port/build_apk.sh [path/to/libemerald.so]
+#   ABI=arm64-v8a android_port/build_apk.sh [path/to/libemerald.so path/to/libemeraldboot.so]
+# ABI: arm64-v8a (the default) or armeabi-v7a, the libraries' architecture.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -12,8 +13,12 @@ SDK="${ANDROID_HOME:-$HOME/Android/Sdk}"
 BT="$SDK/build-tools/$(ls "$SDK/build-tools" | sort -V | tail -1)"
 PLATFORM="$SDK/platforms/$(ls "$SDK/platforms" | sort -V | tail -1)/android.jar"
 NDK="$SDK/ndk/$(ls "$SDK/ndk" | sort -V | tail -1)"
-CC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi33-clang"
-ABI=armeabi-v7a
+ABI="${ABI:-arm64-v8a}"
+case "$ABI" in
+    arm64-v8a) CC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang" ;;
+    armeabi-v7a) CC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi33-clang" ;;
+    *) echo "build_apk.sh: unknown ABI $ABI" >&2; exit 1 ;;
+esac
 # The version: Emerald 3DS's (3ds_port/Makefile), plus this port's subversion
 # (subversion.txt) when it is not 0 - 0.5.0, 0.5.0.1... The version code orders
 # updates: major * 1000000 + minor * 10000 + patch * 100 + subversion.
@@ -30,12 +35,19 @@ rm -rf "$OUT"
 mkdir -p "$OUT/classes" "$OUT/dex" "$OUT/lib/$ABI"
 
 LIB="${1:-}"
+BOOT="${2:-}"
 if [[ -z "$LIB" ]]; then
     LIB="$OUT/libemerald.so"
     "$CC" -shared -fPIC -O2 -Wall -Werror -o "$LIB" "$HERE/app/jni/hello.c" \
         -landroid -lEGL -lGLESv3 -llog
 fi
+if [[ -z "$BOOT" ]]; then
+    # Java loads libemeraldboot.so, which loads libemerald.so (boot/emerald_boot.c).
+    BOOT="$OUT/libemeraldboot.so"
+    "$CC" -shared -fPIC -O2 -Wall -Werror -o "$BOOT" "$HERE/boot/emerald_boot.c" -ldl -llog
+fi
 cp "$LIB" "$OUT/lib/$ABI/libemerald.so"
+cp "$BOOT" "$OUT/lib/$ABI/libemeraldboot.so"
 
 javac -source 11 -target 11 -Xlint:-options -classpath "$PLATFORM" -d "$OUT/classes" \
     $(find "$HERE/app/java" -name '*.java')
@@ -44,11 +56,13 @@ javac -source 11 -target 11 -Xlint:-options -classpath "$PLATFORM" -d "$OUT/clas
 # A development APK is debuggable and installs as com.cer0.emerald.dev, beside
 # the release app (debug-signed, it could not update it); a release one
 # (RELEASE=1, tools/release.sh) is com.cer0.emerald, not debuggable.
-"$BT/aapt2" link -o "$OUT/base.apk" -I "$PLATFORM" --manifest "$HERE/app/AndroidManifest.xml" \
+# The resources: the launcher icon (app/res, made by tools/make_icon.py).
+"$BT/aapt2" compile --dir "$HERE/app/res" -o "$OUT/res.zip"
+"$BT/aapt2" link -o "$OUT/base.apk" -I "$PLATFORM" --manifest "$HERE/app/AndroidManifest.xml" "$OUT/res.zip" \
     --version-name "$VERSION_NAME" --version-code "$VERSION_CODE" --replace-version \
     ${ASSETS:+-A "$ASSETS"} $([[ -n "${RELEASE:-}" ]] || echo --debug-mode --rename-manifest-package com.cer0.emerald.dev)
 ( cd "$OUT/dex" && zip -q "$OUT/base.apk" classes.dex )
-( cd "$OUT" && zip -q -0 "$OUT/base.apk" "lib/$ABI/libemerald.so" )
+( cd "$OUT" && zip -q -0 "$OUT/base.apk" "lib/$ABI/libemerald.so" "lib/$ABI/libemeraldboot.so" )
 
 "$BT/zipalign" -f -p 4 "$OUT/base.apk" "$OUT/aligned.apk"
 # The release key when KEYSTORE is set (KEYSTORE_PASS: a file holding its

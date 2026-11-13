@@ -5045,7 +5045,7 @@ static int SectionCache(const ViewState *s)
  * everything round the window and nothing of it. */
 static void BlitAroundWindow(int x0, int y0, int x1, int y1)
 {
-    const int wx0 = CTR_BOTTOM_WIN_X, wy0 = CTR_BOTTOM_WIN_Y, wx1 = wx0 + 240, wy1 = wy0 + 160;
+    const int wx0 = CTR_BOTTOM_WIN_X, wy0 = CTR_BOTTOM_WIN_SCREEN_Y, wx1 = wx0 + 240, wy1 = wy0 + 160;
     int my0, my1;
 
     CtrVideo_BottomStrips(sCanvas);
@@ -6638,8 +6638,8 @@ void CtrBottom_TestSwoop(unsigned step)
  * screen, in the middle of it: the same place). */
 static bool8 InGameWindow(int x, int y)
 {
-    return x >= CTR_BOTTOM_WIN_X && x < CTR_BOTTOM_WIN_X + 240 && y >= CTR_BOTTOM_WIN_Y
-        && y < CTR_BOTTOM_WIN_Y + 160;
+    return x >= CTR_BOTTOM_WIN_X && x < CTR_BOTTOM_WIN_X + 240 && y >= CTR_BOTTOM_WIN_SCREEN_Y
+        && y < CTR_BOTTOM_WIN_SCREEN_Y + 160;
 }
 
 /* Returns the id to show as pressed. */
@@ -6664,7 +6664,7 @@ static u8 ProcessTouch(u8 mode)
      * the touch in pixels of it, as it goes (drags scroll its list). */
     if ((in->touchDown && ShopShown(mode)) || (sTouch.bag && sTouch.active && ShopShown(mode)))
     {
-        int ox = CTR_BOTTOM_WIN_X, oy = CTR_BOTTOM_WIN_Y;
+        int ox = CTR_BOTTOM_WIN_X, oy = CTR_BOTTOM_WIN_SCREEN_Y;
 
         if (in->touchDown)
         {
@@ -6703,7 +6703,7 @@ static u8 ProcessTouch(u8 mode)
          && (sShown.bagView == BAG_VIEW_WHOLE || InGameWindow(in->touchX, in->touchY)))
      || (sTouch.bag && sTouch.active && BagShown(mode)))
     {
-        int ox = CTR_BOTTOM_WIN_X, oy = CTR_BOTTOM_WIN_Y;
+        int ox = CTR_BOTTOM_WIN_X, oy = CTR_BOTTOM_WIN_SCREEN_Y;
 
         if (in->touchDown)
         {
@@ -6740,7 +6740,7 @@ static u8 ProcessTouch(u8 mode)
     if ((in->touchDown && DexShown(mode) && !sShown.native && InGameWindow(in->touchX, in->touchY))
      || (sTouch.bag && sTouch.active && DexShown(mode)))
     {
-        int ox = CTR_BOTTOM_WIN_X, oy = CTR_BOTTOM_WIN_Y;
+        int ox = CTR_BOTTOM_WIN_X, oy = CTR_BOTTOM_WIN_SCREEN_Y;
 
         if (in->touchDown)
         {
@@ -6783,7 +6783,7 @@ static u8 ProcessTouch(u8 mode)
         if (mode == MODE_PARTY_MENU && !sShown.native
          && (sShown.bagView == BAG_VIEW_WHOLE || InGameWindow(sTouch.startX, sTouch.startY)))
         {
-            int ox = CTR_BOTTOM_WIN_X, oy = CTR_BOTTOM_WIN_Y;
+            int ox = CTR_BOTTOM_WIN_X, oy = CTR_BOTTOM_WIN_SCREEN_Y;
 
             if (!sTouch.dragged)
                 CtrMenu_PostTap(sTouch.lastX - ox, sTouch.lastY - oy);
@@ -6793,7 +6793,7 @@ static u8 ProcessTouch(u8 mode)
          * and take the tap themselves, in pixels of that picture. */
         if (mode == MODE_STORAGE)
         {
-            int x = sTouch.lastX - CTR_BOTTOM_WIN_X, y = sTouch.lastY - CTR_BOTTOM_WIN_Y;
+            int x = sTouch.lastX - CTR_BOTTOM_WIN_X, y = sTouch.lastY - CTR_BOTTOM_WIN_SCREEN_Y;
 
             /* Or a summary opened from them, the same way. So does the
              * trade menu. */

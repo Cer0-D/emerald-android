@@ -912,9 +912,59 @@ void VoxelWorld_GetMapDimensions(int *width, int *height)
     }
 }
 
+/*
+ * The link player whose sprite the field camera follows, or OBJECT_EVENTS_COUNT
+ * outside a link room. gLinkPlayerObjectEvents outlive the room (nothing
+ * clears them on the way out, and their object ids go to whoever comes next),
+ * so the camera says whether they still mean anything: in a link room it
+ * follows the local player's link sprite (SetCameraToTrackGuestPlayer),
+ * everywhere else the avatar's.
+ */
+static uint8_t TrackedLinkPlayerObject(void)
+{
+    u32 followed;
+
+    /* gFieldCamera's sprite is the camera's own, invisible one; the sprite it
+     * follows is in its data (AddCameraObject: sCamera_FollowSpriteId). */
+    if (gFieldCamera.spriteId == 0 || gFieldCamera.spriteId >= MAX_SPRITES
+     || !gSprites[gFieldCamera.spriteId].inUse)
+        return OBJECT_EVENTS_COUNT;
+    followed = (u16)gSprites[gFieldCamera.spriteId].data[0];
+    for (u32 i = 0; i < ARRAY_COUNT(gLinkPlayerObjectEvents); i++)
+    {
+        const struct LinkPlayerObjectEvent *link = &gLinkPlayerObjectEvents[i];
+        const struct ObjectEvent *obj;
+
+        if (!link->active || link->objEventId >= OBJECT_EVENTS_COUNT)
+            continue;
+        obj = &gObjectEvents[link->objEventId];
+        if (obj->active && obj->spriteId < MAX_SPRITES && obj->spriteId == followed
+         && obj->spriteId != gPlayerAvatar.spriteId)
+            return link->objEventId;
+    }
+    return OBJECT_EVENTS_COUNT;
+}
+
+uint8_t VoxelWorld_PlayerObjectId(void)
+{
+    uint8_t id = TrackedLinkPlayerObject();
+
+    return id < OBJECT_EVENTS_COUNT ? id : gPlayerAvatar.objectEventId;
+}
+
+bool VoxelWorld_IsLinkPlayerObject(uint8_t objectEventId)
+{
+    if (TrackedLinkPlayerObject() >= OBJECT_EVENTS_COUNT)
+        return FALSE;
+    for (u32 i = 0; i < ARRAY_COUNT(gLinkPlayerObjectEvents); i++)
+        if (gLinkPlayerObjectEvents[i].active && gLinkPlayerObjectEvents[i].objEventId == objectEventId)
+            return TRUE;
+    return FALSE;
+}
+
 void VoxelWorld_GetPlayerWorldCoords(float *worldX, float *worldZ)
 {
-    const struct ObjectEvent *player = &gObjectEvents[gPlayerAvatar.objectEventId];
+    const struct ObjectEvent *player = &gObjectEvents[VoxelWorld_PlayerObjectId()];
     float x = (float)(player->currentCoords.x - MAP_OFFSET);
     float z = (float)(player->currentCoords.y - MAP_OFFSET);
 

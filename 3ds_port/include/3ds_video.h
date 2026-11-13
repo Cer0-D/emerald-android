@@ -289,6 +289,11 @@ void CtrVideo_SetFieldLight(bool on, int x, int y, int radius);
  * window 3ds_bottom_ui.c frames. Everything else there is its canvas. */
 #define CTR_BOTTOM_WIN_X 40
 #define CTR_BOTTOM_WIN_Y 40
+/* Its row on the screen, which is what the picture and the touches use. The
+ * views - the window's frame among them - are laid out for the 3DS's 240 rows
+ * and drawn half a taller canvas's extra rows lower (3ds_bottom.h,
+ * CTR_BOTTOM_EXTRA: 40 on the Thor's 280, none on the 3DS). */
+#define CTR_BOTTOM_WIN_SCREEN_Y (CTR_BOTTOM_WIN_Y + CTR_BOTTOM_EXTRA / 2)
 /* Whether the last frame drew a game screen into the bottom screen's window:
  * the PokéNav, the bag, the party menu, the Pokédex, the boxes. */
 bool CtrVideo_BottomInUse(void);

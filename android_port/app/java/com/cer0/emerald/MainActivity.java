@@ -24,7 +24,9 @@ import android.view.WindowInsetsController;
  */
 public class MainActivity extends Activity {
     static final String TAG = "Emerald";
-    static { System.loadLibrary("emerald"); }
+    // The boot library loads the game library, libemerald.so, where it can run
+    // (android_port/boot/emerald_boot.c) and registers its native methods.
+    static { System.loadLibrary("emeraldboot"); }
 
     static native void nativeInit(String filesDir, String romfsDir);
     static native void nativeSurface(int screen, Object surface); // surface null = gone
@@ -95,6 +97,8 @@ public class MainActivity extends Activity {
         super.onCreate(b);
         hideBars(getWindow().getDecorView());
         getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // Local wireless play's radio (Bluetooth LE) asks through this activity.
+        LocalBluetooth.attach(this);
         /*
          * A release APK carries the engine files and the recipe (assets/engine,
          * assets/builder: android.mk android-release), never game data: the

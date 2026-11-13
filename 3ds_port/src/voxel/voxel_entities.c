@@ -166,6 +166,16 @@ static float GetMovementProgress(const struct ObjectEvent *obj, const struct Spr
     int speed, timer, stepLen;
     float t;
 
+    /* A link room's player steps by itself (overworld.c,
+     * MovementStatusHandler_TryAdvanceScript): a pixel a frame, its
+     * directionSequenceIndex counting the 16 down. */
+    if (VoxelWorld_IsLinkPlayerObject((u8)(obj - gObjectEvents)))
+    {
+        int left = (int)(s8)obj->directionSequenceIndex;
+
+        return left > 0 && left <= VOXEL_PIXELS_PER_TILE
+             ? (float)(VOXEL_PIXELS_PER_TILE - left) / VOXEL_PIXELS_PER_TILE : 1.0f;
+    }
     /* Idle: ShiftStillObjectEventCoords has made previous == current. */
     if (!obj->singleMovementActive && !obj->heldMovementActive)
         return 1.0f;
@@ -216,7 +226,7 @@ static float ObjectDeck(const struct ObjectEvent *obj, float worldX, float world
 
 float VoxelEntities_PlayerDeck(void)
 {
-    const struct ObjectEvent *obj = &gObjectEvents[gPlayerAvatar.objectEventId];
+    const struct ObjectEvent *obj = &gObjectEvents[VoxelWorld_PlayerObjectId()];
     float x = 0.0f, z = 0.0f;
 
     if (!obj->active || obj->spriteId >= MAX_SPRITES)
@@ -232,7 +242,7 @@ float VoxelEntities_PlayerDeck(void)
 
 float VoxelEntities_PlayerGround(void)
 {
-    const struct ObjectEvent *obj = &gObjectEvents[gPlayerAvatar.objectEventId];
+    const struct ObjectEvent *obj = &gObjectEvents[VoxelWorld_PlayerObjectId()];
     float x = 0.0f, z = 0.0f;
 
     if (!obj->active || obj->spriteId >= MAX_SPRITES)
@@ -253,7 +263,7 @@ float VoxelEntities_PlayerGround(void)
 
 void VoxelEntities_GetPlayerWorldPos(float *worldX, float *worldZ)
 {
-    const struct ObjectEvent *obj = &gObjectEvents[gPlayerAvatar.objectEventId];
+    const struct ObjectEvent *obj = &gObjectEvents[VoxelWorld_PlayerObjectId()];
     float x = 0.0f, z = 0.0f;
 
     if (!obj->active || obj->spriteId >= MAX_SPRITES)
@@ -1766,8 +1776,8 @@ unsigned VoxelEntities_Emit(VoxelBuilder *builder, uint16_t *atlas, const VoxelC
 
         /* Where it will be drawn, near enough to tell whether the camera
          * can see it (the placement below). */
-        reference = gPlayerAvatar.objectEventId < OBJECT_EVENTS_COUNT
-                  ? &objects[gPlayerAvatar.objectEventId] : NULL;
+        reference = VoxelWorld_PlayerObjectId() < OBJECT_EVENTS_COUNT
+                  ? &objects[VoxelWorld_PlayerObjectId()] : NULL;
         if (effect->tile)
         {
             float cx = (float)(sprite->data[1] - MAP_OFFSET) + 0.5f;
@@ -1907,7 +1917,7 @@ unsigned VoxelEntities_Emit(VoxelBuilder *builder, uint16_t *atlas, const VoxelC
         EmitBillboard(builder, &sSlots[i], i, card->worldX + 0.5f, card->worldZ + 0.5f,
                       0.0f, 0.0f, rise, card->deck, rightX, rightZ, stretch, card->shade * dusk, 1.0f);
         sDepthCards = false;
-        if (i == gPlayerAvatar.objectEventId && builder->count >= first + 6)
+        if (i == VoxelWorld_PlayerObjectId() && builder->count >= first + 6)
             sPlayerVertexFirst = (int)first;
     }
 
@@ -1929,8 +1939,8 @@ unsigned VoxelEntities_Emit(VoxelBuilder *builder, uint16_t *atlas, const VoxelC
         {
             /* Placed from the player as a decal is: its picture's bottom
              * edge 8 px under the middle of the player's tile. */
-            reference = gPlayerAvatar.objectEventId < OBJECT_EVENTS_COUNT
-                      ? &objects[gPlayerAvatar.objectEventId] : NULL;
+            reference = VoxelWorld_PlayerObjectId() < OBJECT_EVENTS_COUNT
+                      ? &objects[VoxelWorld_PlayerObjectId()] : NULL;
             if (reflections != NULL && reference != NULL && reference->drawn)
                 EmitClouds(reflections, &sSlots[effect->slot], effect->slot, camera,
                            reference->worldX + 0.5f
@@ -1949,9 +1959,9 @@ unsigned VoxelEntities_Emit(VoxelBuilder *builder, uint16_t *atlas, const VoxelC
             float cz = (float)(sprite->data[2] - MAP_OFFSET) + 0.5f;
             float shade = 1.0f;
 
-            if (gPlayerAvatar.objectEventId < OBJECT_EVENTS_COUNT
-             && objects[gPlayerAvatar.objectEventId].drawn)
-                shade = objects[gPlayerAvatar.objectEventId].shade;
+            if (VoxelWorld_PlayerObjectId() < OBJECT_EVENTS_COUNT
+             && objects[VoxelWorld_PlayerObjectId()].drawn)
+                shade = objects[VoxelWorld_PlayerObjectId()].shade;
 
             if (VoxelWorld_InstanceCount() > 0)
             {
@@ -1979,8 +1989,8 @@ unsigned VoxelEntities_Emit(VoxelBuilder *builder, uint16_t *atlas, const VoxelC
         }
         /* On its own: placed from the player, whose feet are on the centre of
          * its tile and whose picture ends at the tile's bottom edge. */
-        reference = gPlayerAvatar.objectEventId < OBJECT_EVENTS_COUNT
-                  ? &objects[gPlayerAvatar.objectEventId] : NULL;
+        reference = VoxelWorld_PlayerObjectId() < OBJECT_EVENTS_COUNT
+                  ? &objects[VoxelWorld_PlayerObjectId()] : NULL;
         if (reference == NULL || !reference->drawn)
             continue;
         {

@@ -129,6 +129,14 @@ bool VoxelWorld_MapIsConnected(void);
  * map by map (GetMapClosedEdges, field_camera.c; CTR_FIELD_EDGE_*). */
 unsigned VoxelWorld_ClosedEdges(void);
 void VoxelWorld_GetPlayerWorldCoords(float *worldX, float *worldZ);
+/* The object the camera follows and that counts as the player: in a link
+ * room (the cable club's, the Union Room's) the local player's link object -
+ * gPlayerAvatar's stays behind where the player came in - elsewhere the
+ * player avatar's. */
+uint8_t VoxelWorld_PlayerObjectId(void);
+/* Whether an object is a link room's player (moved by overworld.c's link
+ * code, not by movement actions). */
+bool VoxelWorld_IsLinkPlayerObject(uint8_t objectEventId);
 void VoxelWorld_GetLocation(int *mapGroup, int *mapNum);
 /* Small renderer-facing classification of the original field weather state. */
 typedef enum {

@@ -373,6 +373,75 @@ void Port_PreloadLatinFonts(void)
 
 static bool sSaveAvailable;
 
+/*
+ * A file that is not an Emerald save - too long for one, or with no sector
+ * bearing Emerald's signature (another game's save, say) - is set aside under
+ * another name, untouched, rather than read as no save: the first save of a
+ * new game would have written over it. The main menu says so
+ * (Port_SaveWasSetAside, main_menu.c). A blank flash (all 0xFF) is no save.
+ */
+#define CTR_SAVE_ASIDE_PATH CTR_DATA_DIR "emerald3ds.sav.not-emerald"
+#define SAVE_SECTOR_BYTES 0x1000
+#define SAVE_SECTOR_SIGNATURE_OFFSET 0xFF8
+#define SAVE_SECTOR_SIGNATURE 0x08012025u
+
+static bool sSaveSetAside;
+
+static bool FlashHasEmeraldSector(void)
+{
+    for (u32 sector = 0; sector < sizeof(FLASH_BASE) / SAVE_SECTOR_BYTES; sector++)
+    {
+        u32 signature;
+
+        memcpy(&signature, FLASH_BASE + sector * SAVE_SECTOR_BYTES + SAVE_SECTOR_SIGNATURE_OFFSET,
+               sizeof(signature));
+        if (signature == SAVE_SECTOR_SIGNATURE)
+            return true;
+    }
+    return false;
+}
+
+static bool FlashIsBlank(void)
+{
+    for (u32 i = 0; i < sizeof(FLASH_BASE); i++)
+        if (FLASH_BASE[i] != 0xFF)
+            return false;
+    return true;
+}
+
+/* Renames the file out of the way (never over another set aside before) and
+ * starts as if there were no save: the next save creates the file afresh. */
+static void SetSaveAside(const char *path, const char *why)
+{
+    char aside[256];
+
+    snprintf(aside, sizeof(aside), "%s", CTR_SAVE_ASIDE_PATH);
+    for (int n = 2; n < 100; n++)
+    {
+        FILE *probe = fopen(aside, "rb");
+
+        if (probe == NULL)
+            break;
+        fclose(probe);
+        snprintf(aside, sizeof(aside), "%s.%d", CTR_SAVE_ASIDE_PATH, n);
+    }
+    memset(FLASH_BASE, 0xFF, sizeof(FLASH_BASE));
+    if (rename(path, aside) == 0)
+    {
+        sSaveSetAside = true;
+        sSaveAvailable = true;
+        CtrLog_Write(CTR_LOG_ERROR, "save set aside: %s %s; kept as %s", path, why, aside);
+    }
+    else
+        CtrLog_Write(CTR_LOG_ERROR, "save refused: %s %s, and could not be set aside (errno=%d)",
+                     path, why, errno);
+}
+
+bool8 Port_SaveWasSetAside(void)
+{
+    return sSaveSetAside;
+}
+
 static void MigrateOldSave(void)
 {
     FILE *probe = fopen(CTR_SAVE_PATH, "rb");
@@ -419,8 +488,11 @@ void Port_SaveInit(void)
     if (size > (long)(sizeof(FLASH_BASE) + SAVE_TRAILER_MAX))
     {
         fclose(file);
-        CtrLog_Write(CTR_LOG_ERROR, "save refused: %s is %ld bytes, not a 128 KiB flash image",
-                     path, size);
+        if (CtrScenario_SavePath())
+            CtrLog_Write(CTR_LOG_ERROR, "save refused: %s is %ld bytes, not a 128 KiB flash image",
+                         path, size);
+        else
+            SetSaveAside(path, "is too long for an Emerald save (not a 128 KiB flash image)");
         return;
     }
     /* A save from a cartridge dump or another emulator can carry more than
@@ -439,6 +511,11 @@ void Port_SaveInit(void)
         return;
     }
 
+    if (!CtrScenario_SavePath() && !FlashIsBlank() && !FlashHasEmeraldSector())
+    {
+        SetSaveAside(path, "has no Emerald save sector (another game's save?)");
+        return;
+    }
     /* A short file still holds whole sectors; Emerald recovers the older slot. */
     sSaveAvailable = true;
     CtrLog_Write(CTR_LOG_FS, "save loaded: %s (%ld bytes)", path, size);

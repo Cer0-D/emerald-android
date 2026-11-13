@@ -70,6 +70,9 @@ const void *Port_ResolveMapAssetPointer(const void *ptr);
 /* ── Save storage ────────────────────────────────────────────────────────── */
 void Port_SaveInit(void);
 bool Port_SaveIsAvailable(void);
+// The save file was not an Emerald save and was set aside, untouched
+// (3ds_compat.c): the main menu says so.
+bool8 Port_SaveWasSetAside(void);
 u16 Port_WriteFlash(u32 offset, const void *data, u32 size);
 
 /* ── Reclaimable resource cache ─────────────────────────────────────────── */

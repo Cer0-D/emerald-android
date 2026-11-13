@@ -8459,7 +8459,7 @@ static void WindowCompose(void)
 
 int CtrVideo_BottomPictureY(int y)
 {
-    y -= CTR_BOTTOM_WIN_Y;
+    y -= CTR_BOTTOM_WIN_SCREEN_Y;
     return y >= 0 && y < 160 ? y : -1;
 }
 

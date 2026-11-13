@@ -1,0 +1,3 @@
+# Overlays checked and found harmless on arm64 (tools/check_overlays.py).
+# "file:function type", then why. Nothing needs to be here: a structure of a
+# task's own goes in TASK_STATE (task.h) instead.

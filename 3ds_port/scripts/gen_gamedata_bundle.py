@@ -16,6 +16,12 @@ the reserved region before AgbMain (3ds_port/src/3ds_script_loader.c):
 The payload uses the same position-independent encoding as the script and
 song bundles (scripts/ctr_bundle.py): pointers into the region are stored as
 region-relative offsets, pointers elsewhere as link-time addresses.
+
+An arm64 library (Android, CTR_PTR64=1) has two widths of pointer in the
+section: the C units' (8 bytes, R_AARCH64_ABS64) and the assembled data's
+32-bit addresses (R_AARCH64_ABS32), which lld leaves as zeros and only this
+bundle carries. Its relocations are RELA, the value being the symbol's plus
+the addend. Such a bundle is version 2: two more lists, of 8-byte sites.
 """
 
 from __future__ import annotations
@@ -28,14 +34,14 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ctr_bundle import HEADER, REFERENCE_SYMBOL, VERSION, elf_symbols, tool  # noqa: E402
+from ctr_bundle import HEADER, HEADER_V2_EXTRA, REFERENCE_SYMBOL, VERSION, elf_symbols, elf_tool  # noqa: E402
 
 MAGIC = b"C3GD"
 SECTION = ".gamedata"
 
 
 def sections(elf: Path) -> dict[str, tuple[str, int, int, int]]:
-    out = subprocess.check_output([tool("arm-none-eabi-readelf"), "-S", "-W", str(elf)], text=True)
+    out = subprocess.check_output([elf_tool("readelf"), "-S", "-W", str(elf)], text=True)
     found = {}
     for line in out.splitlines():
         m = re.match(r"\s*\[\s*\d+\]\s+(\S+)\s+(\S+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)", line)
@@ -47,7 +53,7 @@ def sections(elf: Path) -> dict[str, tuple[str, int, int, int]]:
 def global_symbols(elf: Path) -> dict[str, int]:
     """Global symbols by name. Local labels are not compared: the NOLOAD link
     does not keep every local label of a section without contents."""
-    out = subprocess.check_output([tool("arm-none-eabi-nm"), "--defined-only", str(elf)],
+    out = subprocess.check_output([elf_tool("nm"), "--defined-only", str(elf)],
                                   text=True, errors="ignore")
     result = {}
     for line in out.splitlines():
@@ -57,20 +63,33 @@ def global_symbols(elf: Path) -> dict[str, int]:
     return result
 
 
-def relocations(elf: Path, section: str) -> list[tuple[int, str]]:
-    out = subprocess.check_output([tool("arm-none-eabi-readelf"), "-r", "-W", str(elf)],
+RELOC_LINE = re.compile(r"^([0-9a-f]{8,16})\s+[0-9a-f]+\s+(R_[A-Z0-9_]+)\s*([0-9a-f]+)?\s*(\S+)?\s*(?:([+-])\s*([0-9a-f]+))?")
+
+
+def relocations(elf: Path, section: str | None) -> list[tuple[int, str, int | None, str]]:
+    """(site, type, symbol value + addend or None for REL, target section) of
+    every relocation applying to `section` (all of them when None)."""
+    out = subprocess.check_output([elf_tool("readelf"), "-r", "-W", str(elf)],
                                   text=True, errors="ignore")
     found = []
-    inside = False
+    target = None
     for line in out.splitlines():
         if line.startswith("Relocation section"):
-            inside = ("'.rel%s'" % section) in line
+            name = line.split("'")[1]
+            target = name[len(".rela"):] if name.startswith(".rela") else name[len(".rel"):]
             continue
-        if not inside:
+        if target is None or (section is not None and target != section):
             continue
-        m = re.match(r"^([0-9a-f]{8})\s+[0-9a-f]+\s+(R_ARM_\w+)", line)
-        if m:
-            found.append((int(m.group(1), 16), m.group(2)))
+        m = RELOC_LINE.match(line)
+        if not m:
+            continue
+        value = None
+        if m.group(3) is not None and m.group(5) is not None:
+            addend = int(m.group(6), 16)
+            value = int(m.group(3), 16) + (addend if m.group(5) == "+" else -addend)
+        elif m.group(3) is not None and name.startswith(".rela"):
+            value = int(m.group(3), 16)
+        found.append((int(m.group(1), 16), m.group(2), value, target))
     return found
 
 
@@ -99,36 +118,63 @@ def main() -> None:
     blob = args.image.read_bytes()
     payload = bytearray(blob[offset:offset + size])
     end = start + size
-    internal, external = [], []
+    internal, external, internal64, external64 = [], [], [], []
     unknown = {}
-    for site, kind in relocations(args.image, SECTION):
+    # PC-relative relocations (jump tables, aarch64 literals) need nothing:
+    # the region keeps its place relative to the code it is linked beside.
+    relative = {"R_AARCH64_PREL32", "R_AARCH64_PREL64", "R_AARCH64_PREL16", "R_ARM_REL32", "R_ARM_PREL31"}
+    for site, kind, value, _ in relocations(args.image, SECTION):
         rel = site - start
         if kind in ("R_ARM_ABS32", "R_ARM_TARGET1"):
             value = struct.unpack_from("<I", payload, rel)[0]
-            if start <= value <= end:
-                struct.pack_into("<I", payload, rel, value - start)
-                internal.append(rel)
-            else:
-                external.append(rel)
+            width, lists = 4, (internal, external)
+        elif kind == "R_AARCH64_ABS32":
+            width, lists = 4, (internal, external)
+        elif kind == "R_AARCH64_ABS64":
+            width, lists = 8, (internal64, external64)
+        elif kind in relative:
+            continue
         else:
             unknown[kind] = unknown.get(kind, 0) + 1
+            continue
+        if value is None:
+            raise SystemExit("gen_gamedata_bundle: no value for the %s at %08X" % (kind, site))
+        fmt = "<I" if width == 4 else "<Q"
+        if start <= value <= end:
+            struct.pack_into(fmt, payload, rel, value - start)
+            lists[0].append(rel)
+        else:
+            if width == 4 and value > 0xFFFFFFFF:
+                raise SystemExit("gen_gamedata_bundle: a 32-bit address beyond 4 GiB at %08X" % site)
+            struct.pack_into(fmt, payload, rel, value)
+            lists[1].append(rel)
     if unknown:
         raise SystemExit("gen_gamedata_bundle: unsupported relocation types %s" % unknown)
+    # A 32-bit address anywhere else is left zero by lld (android.mk): only
+    # this bundle fills them in, so they must all be in the region.
+    # (Debug sections are never loaded: their 32-bit offsets are DWARF's.)
+    stray = sorted({target for _, kind, _, target in relocations(args.image, None)
+                    if kind == "R_AARCH64_ABS32" and target != SECTION and not target.startswith(".debug")})
+    if stray:
+        raise SystemExit("gen_gamedata_bundle: 32-bit addresses outside %s, in %s" % (SECTION, stray))
 
     symbols = elf_symbols(args.elf)
     if REFERENCE_SYMBOL not in symbols:
         raise SystemExit("gen_gamedata_bundle: %s not found" % REFERENCE_SYMBOL)
-    internal.sort()
-    external.sort()
+    for sites in (internal, external, internal64, external64):
+        sites.sort()
+    wide = bool(internal64 or external64)
     args.out_dir.mkdir(parents=True, exist_ok=True)
     (args.out_dir / "gamedata.bin").write_bytes(payload)
     with (args.out_dir / "gamedata.rel").open("wb") as f:
-        f.write(HEADER.pack(MAGIC, VERSION, len(payload), symbols[REFERENCE_SYMBOL],
+        f.write(HEADER.pack(MAGIC, 2 if wide else VERSION, len(payload), symbols[REFERENCE_SYMBOL],
                             len(internal), len(external)))
-        f.write(b"".join(struct.pack("<I", x) for x in internal))
-        f.write(b"".join(struct.pack("<I", x) for x in external))
-    print("gen_gamedata_bundle: payload=%d bytes, internal=%d, external=%d, region at %08X"
-          % (len(payload), len(internal), len(external), start))
+        if wide:
+            f.write(HEADER_V2_EXTRA.pack(len(internal64), len(external64)))
+        for sites in (internal, external, internal64, external64):
+            f.write(b"".join(struct.pack("<I", x) for x in sites))
+    print("gen_gamedata_bundle: payload=%d bytes, internal=%d, external=%d, 64-bit %d + %d, region at %08X"
+          % (len(payload), len(internal), len(external), len(internal64), len(external64), start))
 
 
 if __name__ == "__main__":

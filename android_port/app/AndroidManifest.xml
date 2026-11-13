@@ -6,9 +6,18 @@
 
     <uses-sdk android:minSdkVersion="33" android:targetSdkVersion="33" />
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+    <!-- Local wireless play over Bluetooth LE (LocalBluetooth.java): finding
+         and hosting sessions nearby, never for location. Asked for the first
+         time a link counter opens a session. -->
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <application
         android:label="Emerald for Android"
+        android:icon="@mipmap/ic_launcher_bitmap"
+        android:roundIcon="@mipmap/ic_launcher"
         android:hasCode="true"
         android:extractNativeLibs="true"
         android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">

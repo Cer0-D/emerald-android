@@ -19,6 +19,9 @@ third-party components. Each keeps its own terms; `LICENSE-PORT.md`
   in `3ds_port/src/voxel/` reuses the logic of its SDL2/OpenGL voxel renderer
   (map instances, metatile classification, atlas composition, follow camera).
   Full text and scope: `3ds_port/src/voxel/NOTICE.md`.
+- **dlmalloc 2.8.6** (Doug Lea), public domain (CC0 1.0), unmodified in
+  `android_port/third_party/dlmalloc/`: the arm64 Android build's heap below
+  4 GiB (`android_port/src/android_lowmem.c`).
 - **devkitARM `3dsx.ld`**, Mozilla Public License 2.0.
   `3ds_port/emerald3ds.ld.in` is a modified copy and stays under the MPL 2.0
   (https://mozilla.org/MPL/2.0/).

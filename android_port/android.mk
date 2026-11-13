@@ -22,13 +22,31 @@ ANDROID_HOME ?= $(HOME)/Android/Sdk
 NDK ?= $(lastword $(sort $(wildcard $(ANDROID_HOME)/ndk/*)))
 NDK_BIN := $(NDK)/toolchains/llvm/prebuilt/linux-x86_64/bin
 API := 33
+# arm64-v8a by default: current phones run no 32-bit code (the Galaxy Z
+# Flip7's Android has none), and the Thor runs both. armeabi-v7a still builds,
+# for comparing the two. The game keeps 32-bit addresses in its data and in
+# u32 variables; the arm64 build puts the whole game image below 4 GiB, where
+# such an address is the address (src/android_boot.c, tools/elf32to64.py).
+ANDROID_ABI ?= arm64-v8a
+ifeq ($(ANDROID_ABI),arm64-v8a)
+CC := $(NDK_BIN)/aarch64-linux-android$(API)-clang
+ARCH :=
+PTR64 := 1
+else ifeq ($(ANDROID_ABI),armeabi-v7a)
 CC := $(NDK_BIN)/armv7a-linux-androideabi$(API)-clang
+ARCH := -marm
+PTR64 := 0
+else
+$(error ANDROID_ABI must be arm64-v8a or armeabi-v7a)
+endif
+# The bundle scripts (scripts/ctr_bundle.py) read the library with these.
+export CTR_PTR64 := $(PTR64)
+export CTR_LLVM_BIN := $(NDK_BIN)
 OBJCOPY := $(NDK_BIN)/llvm-objcopy
 READELF := $(NDK_BIN)/llvm-readelf
 # The data units use GNU as like the 3DS build (full.mk: $(DEVKITARM)/bin/...).
 DEVKITARM ?= /usr
 
-ARCH := -marm
 CPPFLAGS := -DPORTABLE -DPLATFORM_3DS -DPLATFORM_ANDROID -Iinclude -I$(ANDROID_PORT)/include
 CFLAGS := $(ARCH) -O2 -g -std=gnu99 -fPIC -fvisibility=hidden -Wall -Wextra -ffunction-sections -fdata-sections
 NATIVE_CFLAGS := $(CFLAGS) -Werror
@@ -103,7 +121,8 @@ build/%.o: src/%.c
 GAME_OBJS := $(FULL_C_OBJS) $(FULL_DATA_OBJS) $(BACKEND_OBJS)
 
 # 3DS native units reused through the libctru shim (android_port/include/3ds.h).
-SHIMMED_NATIVE_SRCS := src/3ds_data.c src/3ds_settings.c src/3ds_scenario.c
+# 3ds_local.c: local wireless play, its UDS calls over Bluetooth LE (src/android_uds.c).
+SHIMMED_NATIVE_SRCS := src/3ds_data.c src/3ds_settings.c src/3ds_scenario.c src/3ds_local.c
 SHIMMED_NATIVE_OBJS := $(patsubst src/%.c,build/%.o,$(SHIMMED_NATIVE_SRCS))
 NATIVE_OBJS := $(ANDROID_OBJS) $(SHARED_NATIVE_OBJS) $(SHIMMED_NATIVE_OBJS)
 
@@ -117,6 +136,12 @@ LDFLAGS += $(foreach f,$(FS_WRAPPED),-Wl,--wrap=$(f))
 # a name the dynamic linker resolves: what the gamedata bundle carries must be
 # the address itself. Nothing else links against this library but its JNI.
 LDFLAGS += -Wl,--build-id=sha1 -Wl,-Bsymbolic
+# arm64: the library's heap is an arena below 4 GiB (src/android_lowmem.c),
+# where the addresses the game keeps in 32 bits can reach it.
+ifeq ($(PTR64),1)
+LOW_WRAPPED := malloc calloc realloc free memalign posix_memalign aligned_alloc malloc_usable_size
+LDFLAGS += $(foreach f,$(LOW_WRAPPED),-Wl,--wrap=$(f))
+endif
 
 build/buildinfo.c: FORCE
 	@mkdir -p build
@@ -132,16 +157,34 @@ build/buildinfo.c: FORCE
 	  printf 'const char gCtrLinkId[] = "E3ID-android";\n'; } > $@.new
 	@cmp -s $@.new $@ || cp $@.new $@
 	@rm -f $@.new
-build/buildinfo.o: build/buildinfo.c
+build/buildinfo.o: build/buildinfo.c build/config
 	"$(CC)" $(CFLAGS) -c $< -o $@
 
 # Linked asm data: writable copies of the pointer tables (tools/rw_data.sh).
 # The copies keep "build/root/..." in their path for the linker script.
+# On arm64 the copies are then rewritten as arm64 objects (tools/elf32to64.py):
+# the data is still assembled by arm-none-eabi-as, byte for byte the 32-bit
+# build's. The handler keep table is the one written with 8-byte pointers.
 RW_DATA_OBJS := $(patsubst %,build/rw/%,$(FULL_DATA_OBJS))
-build/rw/%.o: %.o $(ANDROID_PORT)/tools/rw_data.sh
+build/rw/%.o: %.o $(ANDROID_PORT)/tools/rw_data.sh $(ANDROID_PORT)/tools/elf32to64.py
 	bash $(ANDROID_PORT)/tools/rw_data.sh "$(OBJCOPY)" "$(READELF)" $< $@
+ifeq ($(PTR64),1)
+	"$(PYTHON)" $(ANDROID_PORT)/tools/elf32to64.py --abs64 .data.rel.ro.ctr_script_keep $@ $@.64
+	mv $@.64 $@
+endif
 
 LINK_OBJS := $(filter-out $(FULL_DATA_OBJS),$(GAME_OBJS)) $(RW_DATA_OBJS) $(NATIVE_OBJS) build/buildinfo.o
+
+# arm64: lld has no dynamic relocation for a 32-bit address and stops at every
+# `.int symbol` in the game data. Those all lie in .gamedata, which the
+# library reserves and the bundle loader fills, relocating them itself
+# (scripts/gen_gamedata_bundle.py checks each one is there). --noinhibit-exec
+# lets the link finish; tools/lld_check.sh fails it on any other diagnostic.
+ifeq ($(PTR64),1)
+LDFLAGS += -Wl,--noinhibit-exec
+LINK_CHECK := bash $(ANDROID_PORT)/tools/lld_check.sh
+LINK_CHECK_DEP := $(ANDROID_PORT)/tools/lld_check.sh
+endif
 
 # Two links of the same objects (emerald_android.ld): the shipped library with
 # the game's read-only data reserved NOLOAD, and the image that keeps it, with
@@ -158,12 +201,29 @@ build/emerald_android_release.ld: $(ANDROID_PORT)/emerald_android.ld $(ANDROID_P
 build/emerald_android_image.ld: $(ANDROID_PORT)/emerald_android.ld $(ANDROID_PORT)/android.mk
 	@mkdir -p build
 	sed -e 's/@GAMEDATA_TYPE@//' -e 's/CTR_WRITABLE_DATA/$(LD_WRITABLE_DATA)/' $< > $@
-build/libemerald.so: $(LINK_OBJS) build/emerald_android_release.ld
+# A save is the save blocks' bytes: they must be laid out alike on 32-bit ARM
+# and arm64, and as on the GBA (tools/check_save_layout.py). Checked again
+# whenever a game unit is rebuilt.
+ifeq ($(PTR64),1)
+SAVE_LAYOUT_CHECK := build/save_layout.ok
+build/save_layout.ok: $(FULL_C_OBJS) $(ANDROID_PORT)/tools/check_save_layout.py
+	"$(PYTHON)" $(ANDROID_PORT)/tools/check_save_layout.py "$(NDK_BIN)" "$(abspath $(ROOT))" $@
+
+# Structures laid over storage sized for the GBA - a task's data, a sprite's,
+# a link buffer - that do not fit it on arm64, or whose pointers move fields
+# other code reads by index (tools/check_overlays.py; reviewed exceptions in
+# tools/check_overlays.allow). libclang, through the system python3.
+OVERLAY_CHECK := build/overlays.ok
+build/overlays.ok: $(FULL_C_OBJS) $(ANDROID_PORT)/tools/check_overlays.py $(ANDROID_PORT)/tools/check_overlays.allow
+	python3 $(ANDROID_PORT)/tools/check_overlays.py . $(abspath $(firstword $(MAKEFILE_LIST))) $@
+endif
+
+build/libemerald.so: $(LINK_OBJS) build/emerald_android_release.ld $(LINK_CHECK_DEP) $(SAVE_LAYOUT_CHECK) $(OVERLAY_CHECK)
 	$(file >build/link.rsp,$(LINK_OBJS))
-	"$(CC)" $(LDFLAGS) -Wl,-T,build/emerald_android_release.ld -Wl,-Map,build/libemerald.lld.map @build/link.rsp $(LIBS) -o $@
-build/gamedata_image.elf: $(LINK_OBJS) build/emerald_android_image.ld build/libemerald.so
+	$(LINK_CHECK) "$(CC)" $(LDFLAGS) -Wl,-T,build/emerald_android_release.ld -Wl,-Map,build/libemerald.lld.map @build/link.rsp $(LIBS) -o $@
+build/gamedata_image.elf: $(LINK_OBJS) build/emerald_android_image.ld build/libemerald.so $(LINK_CHECK_DEP)
 	$(file >build/link.rsp,$(LINK_OBJS))
-	"$(CC)" $(LDFLAGS) -Wl,-T,build/emerald_android_image.ld -Wl,--emit-relocs @build/link.rsp $(LIBS) -o $@
+	$(LINK_CHECK) "$(CC)" $(LDFLAGS) -Wl,-T,build/emerald_android_image.ld -Wl,--emit-relocs @build/link.rsp $(LIBS) -o $@
 
 # The data generators read the executable as $(TARGET).elf and its map in
 # GNU ld's shape (full.mk: asset table, script and song bundles).
@@ -188,19 +248,26 @@ romfs/data.embedded:
 	printf 'embedded\n' > $@
 romfs/engine/abi.bin: $(ROMFS_ANDROID) $(SCRIPTS)/staging.py
 	"$(PYTHON)" $(SCRIPTS)/staging.py abi --romfs romfs
+# Local wireless play links only identical builds (3ds_local.c): the library
+# as shipped and the game data's ABI, as the 3DS's (3ds_port/Makefile).
+romfs/engine/build_id.bin: build/libemerald-stripped.so romfs/engine/abi.bin scripts/gen_build_id.py
+	"$(PYTHON)" scripts/gen_build_id.py build/libemerald-stripped.so romfs/engine/abi.bin $@
 
 .PHONY: all game-objs lib romfs-data
 game-objs: $(GAME_OBJS)
 lib: build/libemerald.so
-romfs-data: $(ROMFS_ANDROID) romfs/engine/abi.bin romfs/data.embedded
+romfs-data: $(ROMFS_ANDROID) romfs/engine/abi.bin romfs/engine/build_id.bin romfs/data.embedded
 all: lib romfs-data
 
 # ── APK ────────────────────────────────────────────────────────────────────
 build/libemerald-stripped.so: build/libemerald.so
 	"$(NDK_BIN)/llvm-strip" --strip-debug -o $@ $<
+# What Java loads: it puts libemerald.so below 4 GiB (boot/emerald_boot.c).
+build/libemeraldboot.so: $(ANDROID_PORT)/boot/emerald_boot.c build/config
+	"$(CC)" $(CFLAGS) -Werror -shared -fuse-ld=lld -Wl,-z,max-page-size=16384 $< -o $@ -ldl -llog
 .PHONY: apk install
-apk: build/libemerald-stripped.so
-	bash $(ANDROID_PORT)/build_apk.sh $(abspath build/libemerald-stripped.so)
+apk: build/libemerald-stripped.so build/libemeraldboot.so
+	ABI=$(ANDROID_ABI) bash $(ANDROID_PORT)/build_apk.sh $(abspath build/libemerald-stripped.so) $(abspath build/libemeraldboot.so)
 install: apk
 	adb install -r $(ANDROID_PORT)/build/emerald-thor.apk
 

@@ -37,36 +37,48 @@ PILLOW="$(sed -n 's/^pillow = "\([^"]*\)"/\1/p' "$REPO/upstream.lock")"
 
 [[ -f "$GBA_ELF" ]] || { echo "release: no original game ELF at $GBA_ELF (GBA_ELF=...)" >&2; exit 1; }
 mkdir -p "$OUT"
+# What the build is doing, as it does it: each step's time when it ends, the
+# Python steps' own lines as they print them (unbuffered, into a log too).
+export PYTHONUNBUFFERED=1
+STEP=""
+STEP_START=$SECONDS
+step() {
+    [[ -z "$STEP" ]] || printf '   (%s: %s)\n' "$STEP" "$(elapsed $((SECONDS - STEP_START)))"
+    STEP="$1"
+    STEP_START=$SECONDS
+    [[ -z "$1" ]] || echo "== $1"
+}
+elapsed() { printf '%dm%02ds' $(($1 / 60)) $(($1 % 60)); }
 
-echo "== 1. library and staging"
-make -C "$TREE" -f "$HERE/android.mk" -j"$(nproc)" lib romfs-data build/libemerald-stripped.so
+step "1. library and staging"
+make -C "$TREE" -f "$HERE/android.mk" -j"$(nproc)" lib romfs-data build/libemerald-stripped.so build/libemeraldboot.so
 
-echo "== 2. engine files"
+step "2. engine files"
 rm -rf "$OUT/assets"
 "$PY" "$REPO/tools/port_common/staging.py" engine --romfs "$TREE/romfs" --out "$OUT/assets/engine"
 # A release reads its game data from the pack: no embedded-data marker.
 rm -f "$OUT/assets/engine/data.embedded"
 
-echo "== 3. recipe"
+step "3. recipe"
 "$PY" "$REPO/tools/gen_recipe.py" --romfs "$TREE/romfs" --rom "$ROM" --out "$OUT/emerald3ds.recipe" \
     --release "android-$(git -C "$REPO" rev-parse --short HEAD)" --elf "$TREE/emerald3ds.elf" \
     --gba-elf "$GBA_ELF" --nm "$NM" --decomp "$REPO/build/upstream" --report "$OUT/recipe-report.txt"
 
-echo "== 4. voxel programs ($IMAGE)"
+step "4. voxel programs ($IMAGE)"
 podman run --rm --userns=keep-id -e HOME=/tmp -w "$REPO" \
     -v "$REPO:$REPO:Z" -v "$ROM:/rom.gba:ro" "$IMAGE" sh -c \
     "pip install -q --user --disable-pip-version-check pillow==$PILLOW && \
      python tools/voxel_precompile.py --recipe '$OUT/emerald3ds.recipe' --rom /rom.gba --port '$TREE' \
          --outputs '$TREE/romfs' --report '$OUT/precompile.json'"
 
-echo "== 5. recipe for the app"
+step "5. recipe for the app"
 "$PY" "$HERE/tools/export_recipe.py" "$OUT/emerald3ds.recipe" "$OUT/assets/builder"
 
-echo "== 6. APK"
+step "6. APK"
 APK_OUT="$OUT/emerald-android.apk" ASSETS="$OUT/assets" RELEASE=1 \
-    bash "$HERE/build_apk.sh" "$TREE/build/libemerald-stripped.so"
+    bash "$HERE/build_apk.sh" "$TREE/build/libemerald-stripped.so" "$TREE/build/libemeraldboot.so"
 
-echo "== 7. audit"
+step "7. audit"
 "$PY" "$REPO/tools/release_audit.py" --zip "$OUT/emerald-android.apk" --rom "$ROM" --strict \
     || { echo "release: the audit failed: do not publish this APK" >&2; exit 1; }
 if [[ -z "${KEYSTORE:-}" ]]; then
@@ -74,4 +86,5 @@ if [[ -z "${KEYSTORE:-}" ]]; then
     echo "release: publish only an APK built with KEYSTORE=... KEYSTORE_PASS=... (build_apk.sh)" >&2
     exit 2
 fi
-echo "release: $OUT/emerald-android.apk"
+step ""
+echo "release: $OUT/emerald-android.apk ($(elapsed $SECONDS) in all)"

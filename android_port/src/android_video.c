@@ -36,6 +36,7 @@
 #include "3ds_battle_hud.h"
 #include "ctr_battle_layout.h"
 #include "3ds_corner_art.h"
+#include "3ds_daynight.h"
 
 /* The battle's hints to the compositor (battle_intro.c, battle_bg.c). */
 unsigned char CtrBattleIntro_Sliding(void);
@@ -73,6 +74,9 @@ static uint16_t sBottom[CTR_BOTTOM_WIDTH * CTR_BOTTOM_HEIGHT];
  * crossfade (sField2D). */
 static uint32_t sField2D[TOP_W * TOP_H];
 static uint32_t *sOut = sTop;
+/* A game screen in the bottom screen's window (CtrVideo_BottomInUse, below). */
+static bool sBottomInUse, sBottomNative, sNativeMenus;
+static uint32_t sBottomPicture[TOP_W * GBA_H];
 /*
  * The voxel world's overlay (3ds_video.c ComposeVoxelOverlay): only what the
  * game lays over the world - its text layer (BG0) and the sprites placed on
@@ -1009,6 +1013,59 @@ static void RenderPicture(int width, int height, int ox, int oy)
     }
 }
 
+/*
+ * How much of a window pixel is the picture: its corners are cut as the
+ * frame round it cuts its opening (3ds_bottom_shell.inc, DrawChamferFrame:
+ * the 240x160 hole, a 3-pixel cut, ChamferDist and Cover in
+ * 3ds_bottom_plate.inc), the rest of a corner pixel the frame's rim.
+ */
+static float WindowCover(int x, int y)
+{
+    const float hw = GBA_W * 0.5f, hh = GBA_H * 0.5f, cut = 3.0f;
+    float du = fabsf(x + 0.5f - hw), dv = fabsf(y + 0.5f - hh);
+    float a = du - hw, b = dv - hh, k = (du + dv - (hw + hh - cut)) * 0.70710678f;
+    float d = (b > a ? b : a);
+
+    d = k > d ? k : d;
+    d = 0.5f - d;
+    return d < 0.0f ? 0.0f : d > 1.0f ? 1.0f : d;
+}
+
+/* The GBA picture into the bottom screen's window. */
+static void RenderBottomWindow(void)
+{
+    /* The frame's rim, light at its top and darker at its foot (its 164 rows). */
+    static const float rimTop[3] = {252, 245, 234}, rimLow[3] = {236, 224, 208};
+
+    sOut = sBottomPicture;
+    RenderPicture(GBA_W, GBA_H, 0, 0);
+    sOut = sTop;
+    for (int x = 0; x < GBA_W; x++)
+    {
+        uint16_t *column = sBottom + (size_t)(CTR_BOTTOM_WIN_X + x) * CTR_BOTTOM_HEIGHT;
+        bool edgeX = x < 4 || x >= GBA_W - 4;
+        for (int y = 0; y < GBA_H; y++)
+        {
+            uint32_t c = sBottomPicture[(size_t)y * TOP_W + x];
+            unsigned r = (c & 0xFF) >> 3, g = ((c >> 8) & 0xFF) >> 2, b = ((c >> 16) & 0xFF) >> 3;
+
+            if (edgeX && (y < 4 || y >= GBA_H - 4))
+            {
+                float t = WindowCover(x, y), along = (y + 2.5f) / (GBA_H + 4), rim[3];
+
+                for (int i = 0; i < 3; i++)
+                    rim[i] = rimTop[i] + (rimLow[i] - rimTop[i]) * along;
+                r = (unsigned)(((c & 0xFF) * t + rim[0] * (1 - t)) + 0.5f) >> 3;
+                g = (unsigned)((((c >> 8) & 0xFF) * t + rim[1] * (1 - t)) + 0.5f) >> 2;
+                b = (unsigned)((((c >> 16) & 0xFF) * t + rim[2] * (1 - t)) + 0.5f) >> 3;
+            }
+
+            column[CTR_BOTTOM_HEIGHT - 1 - (CTR_BOTTOM_WIN_SCREEN_Y + y)] = (uint16_t)((r << 11) | (g << 5) | b);
+        }
+    }
+    sBottomDirty = true;
+}
+
 static void RenderTop(void)
 {
     bool gba = sStage || sBattle || sTransition || sCentred != CTR_CENTRED_NONE;
@@ -1169,12 +1226,37 @@ void CtrVideo_DecodeCounts(uint32_t counts[8]) { memset(counts, 0, 8 * sizeof(ui
 void CtrVideo_NotifyWrite(const void *dest, unsigned bytes) { (void)dest; (void)bytes; }
 const uint8_t *CtrVideo_GetBgVram(void) { return sMem.vram; }
 void CtrVideo_RequestPlaneRelease(void) {}
-bool CtrVideo_BottomInUse(void) { return false; }
-void CtrVideo_SetBottomNative(bool native) { (void)native; }
-void CtrVideo_SetNativeMenus(bool on) { (void)on; }
+/*
+ * A game screen in the bottom screen's window, as 3ds_video.c draws it: the
+ * PokéNav, the trainer card, and the bag, the Pokédex and the party menu when
+ * the bottom screen does not draw them itself (the classic menus). Its picture
+ * goes 1:1 into the window at (CTR_BOTTOM_WIN_X, CTR_BOTTOM_WIN_Y), the bottom
+ * screen's canvas round it (3ds_bottom_ui.c, BlitAroundWindow), and the top
+ * screen keeps the picture it had. The screens the 3DS draws over the whole
+ * bottom screen (the PC's boxes, the summary...) stay on the top one here.
+ */
+
+bool CtrVideo_BottomInUse(void) { return sBottomInUse; }
+void CtrVideo_SetBottomNative(bool native) { sBottomNative = native; }
+void CtrVideo_SetNativeMenus(bool on) { sNativeMenus = on; }
+
+static bool BottomWindowScreen(unsigned screen)
+{
+    if (sBottomNative)
+        return false;
+    if (screen == CTR_CENTRED_POKENAV || screen == CTR_CENTRED_CARD)
+        return true;
+    return !sNativeMenus && (screen == CTR_CENTRED_BAG || screen == CTR_CENTRED_POKEDEX
+                             || screen == CTR_CENTRED_PARTY);
+}
 void CtrVideo_BottomStrips(const uint16_t *canvas) { (void)canvas; }
 bool CtrVideo_BottomWhole(void) { return false; }
-int CtrVideo_BottomPictureY(int y) { return y; }
+/* A touch's row in the window's picture, -1 off it (as 3ds_video.c). */
+int CtrVideo_BottomPictureY(int y)
+{
+    y -= CTR_BOTTOM_WIN_SCREEN_Y;
+    return y >= 0 && y < GBA_H ? y : -1;
+}
 void CtrVideo_ClearScreenOam(void) { memset(sScreenOam, 0, sizeof(sScreenOam)); }
 void CtrVideo_MarkScreenOam(unsigned first, unsigned end) { Mark(sScreenOam, first, end); }
 void CtrVideo_MarkMachineOam(unsigned first, unsigned end) { (void)first; (void)end; }
@@ -1406,6 +1488,99 @@ void AndroidVideo_BottomViewport(int w, int h, int *x, int *y, int *vw, int *vh)
     Cover(w, h, CTR_BOTTOM_WIDTH, CTR_BOTTOM_HEIGHT, x, y, vw, vh);
 }
 
+#ifndef CTR_SHOW_FPS
+#define CTR_SHOW_FPS 1
+#endif
+#if CTR_SHOW_FPS
+/*
+ * The FPS counter (SHOW_FPS=1), shown when the options turn it on
+ * (CtrSettings_ShowFps), as 3ds_video.c draws it: "FPS shown/game" in a 3x5
+ * pixel font over a translucent box, in the top screen's top left corner -
+ * the pictures a second, and the game frames a second (CtrPlatform_FrameCount),
+ * which differ on a slow frame. Measured over a second, the log's over five.
+ */
+static const char *const sFpsGlyphs[] = {
+    "111101101101111", "010110010010111", "111001111100111", "111001111001111",
+    "101101111001001", "111100111001111", "111100111101111", "111001001001001",
+    "111101111101111", "111101111001111",
+    "111100111100100", /* F */
+    "111101111100100", /* P */
+    "001001010100100", /* / */
+};
+static float sOverlayFps, sOverlayGameFps;
+/* Defined with the quads, further down. */
+static int sQuadW, sQuadH;
+static void BlendOver(void);
+static void Rect(float x0, float y0, float x1, float y1, uint32_t abgr);
+
+static void UpdateOverlayFps(void)
+{
+    static uint64_t start, startGame;
+    static uint32_t frames;
+    uint64_t now = CtrPlatform_Milliseconds(), game = CtrPlatform_FrameCount();
+
+    if (start == 0 || now < start)
+    {
+        start = now;
+        startGame = game;
+        frames = 0;
+        return;
+    }
+    frames++;
+    if (now - start >= 1000)
+    {
+        sOverlayFps = frames * 1000.0f / (float)(now - start);
+        sOverlayGameFps = (float)(game - startGame) * 1000.0f / (float)(now - start);
+        start = now;
+        startGame = game;
+        frames = 0;
+    }
+}
+
+/* On the window (w x h): its top left at (x, y) from the window's top left,
+ * one font pixel `px` window pixels. Quad's y counts from the bottom there. */
+static void DrawFps(int w, int h, float x, float y, float px)
+{
+    unsigned fps = (unsigned)(sOverlayFps + 0.5f), game = (unsigned)(sOverlayGameFps + 0.5f);
+    unsigned glyphs[12], count = 0;
+    char digits[8];
+    int length = snprintf(digits, sizeof(digits), "%u/%u", fps > 999 ? 999 : fps, game > 999 ? 999 : game);
+
+    glyphs[count++] = 10;  /* F */
+    glyphs[count++] = 11;  /* P */
+    glyphs[count++] = 5;   /* S, which is a 5 */
+    glyphs[count++] = ~0u; /* space */
+    for (int i = 0; i < length && count < 12; ++i)
+        glyphs[count++] = digits[i] == '/' ? 12u : (unsigned)(digits[i] - '0');
+
+    /* Quads count in this window's pixels while it draws; the frame's own
+     * targets set their size once and draw on (QuadTarget), so it goes back. */
+    int savedW = sQuadW, savedH = sQuadH;
+    sQuadW = w;
+    sQuadH = h;
+    BlendOver();
+#define FPS_RECT(x0, y0, x1, y1, abgr) Rect((x0), h - (y1), (x1), h - (y0), (abgr))
+    FPS_RECT(x + 2 * px, y + 2 * px, x + (2 + count * 4 + 3) * px, y + (2 + 5 + 4) * px, 0xA0000000u);
+    for (unsigned i = 0; i < count; ++i)
+    {
+        if (glyphs[i] == ~0u)
+            continue;
+        const char *g = sFpsGlyphs[glyphs[i]];
+        for (int row = 0; row < 5; ++row)
+            for (int col = 0; col < 3; ++col)
+                if (g[row * 3 + col] == '1')
+                {
+                    float gx = x + (4 + i * 4 + col) * px, gy = y + (4 + row) * px;
+                    FPS_RECT(gx, gy, gx + px, gy + px, 0xFFFFFFFFu);
+                }
+    }
+#undef FPS_RECT
+    glDisable(GL_BLEND);
+    sQuadW = savedW;
+    sQuadH = savedH;
+}
+#endif
+
 static void DrawScreen(int screen, GLuint tex, int pw, int ph, int rotate)
 {
     EGLint w = 0, h = 0;
@@ -1436,8 +1611,18 @@ static void DrawScreen(int screen, GLuint tex, int pw, int ph, int rotate)
     glUniform4f(sURect, 2.0f * x / w - 1.0f, 1.0f - 2.0f * (y + vh) / h,
                 2.0f * (x + vw) / w - 1.0f, 1.0f - 2.0f * y / h);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+#if CTR_SHOW_FPS
+    if (screen == HOST_SCREEN_TOP && CtrSettings_ShowFps())
+        DrawFps(w, h, (float)x, (float)y, (float)vh / (float)ph);
+#endif
     eglSwapBuffers(sDpy, sSurf[screen]);
 }
+
+/* The composited top screen, sampled down for capture_top.rgba: its own
+ * buffer. It was written into sTop, which holds what the next frames lay over
+ * the world and is not wholly redrawn: a capture stayed on the screen. */
+static uint32_t sCaptureTop[TOP_W * TOP_H];
+static bool sCaptureComposited;
 
 static void Capture(void)
 {
@@ -1447,7 +1632,7 @@ static void Capture(void)
     snprintf(path, sizeof(path), "%s/capture_top.rgba", AndroidHost_FilesDir());
     if ((f = fopen(path, "wb")))
     {
-        fwrite(sTop, 4, TOP_W * TOP_H, f);
+        fwrite(sCaptureComposited ? sCaptureTop : sTop, 4, TOP_W * TOP_H, f);
         fclose(f);
     }
     snprintf(path, sizeof(path), "%s/capture_bottom.rgb565cm", AndroidHost_FilesDir());
@@ -1456,6 +1641,7 @@ static void Capture(void)
         fwrite(sBottom, 2, CTR_BOTTOM_WIDTH * CTR_BOTTOM_HEIGHT, f);
         fclose(f);
     }
+    sCaptureComposited = false;
     CtrLog_Write(CTR_LOG_VIDEO, "capture written (frame %lu)", (unsigned long)sStats.frames);
 }
 
@@ -1478,6 +1664,59 @@ static void Pace(void)
     else if (behind < 0)
         clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &sNextFrame, NULL);
     sStats.waitMs = CtrPlatform_TickMs(CtrPlatform_Ticks() - start);
+}
+
+/*
+ * Where a late frame's time went: frames over 16.7 ms, summed by part over
+ * the fps line's five seconds and printed beside it (port.log "late"). The
+ * swap is where a busy GPU shows: eglSwapBuffers waits for it.
+ */
+enum { LATE_UPDATE, LATE_DRAW, LATE_TOP, LATE_BOTTOM, LATE_AFTER, LATE_MESH, LATE_DRAFT, LATE_ATLAS,
+       LATE_TOTAL, LATE_COUNT };
+static float sLatePart[LATE_COUNT];
+static struct { unsigned frames; float sum[LATE_COUNT], max[LATE_COUNT]; } sLate;
+
+static void LateSpan(int part, uint64_t from)
+{
+    sLatePart[part] += CtrPlatform_TickMs(svcGetSystemTick() - from);
+}
+
+static void LateFrame(uint64_t frameStart)
+{
+    const CtrVoxelStats *v = CtrVoxel_GetStats();
+
+    sLatePart[LATE_TOTAL] = CtrPlatform_TickMs(svcGetSystemTick() - frameStart);
+    if (sLatePart[LATE_TOTAL] > 1000.0f / 60.0f)
+    {
+        sLatePart[LATE_MESH] = v->meshMs;
+        sLatePart[LATE_DRAFT] = v->draftMs;
+        sLatePart[LATE_ATLAS] = v->atlasMs;
+        sLate.frames++;
+        for (int i = 0; i < LATE_COUNT; ++i)
+        {
+            sLate.sum[i] += sLatePart[i];
+            if (sLatePart[i] > sLate.max[i])
+                sLate.max[i] = sLatePart[i];
+        }
+    }
+    memset(sLatePart, 0, sizeof(sLatePart));
+}
+
+static void LateLog(void)
+{
+    static const char *const names[LATE_COUNT] = {"update", "draw", "top", "bottom", "after",
+                                                   "mesh", "draft", "atlas", "total"};
+    char line[512];
+    int at;
+
+    if (sLate.frames == 0)
+        return;
+    at = snprintf(line, sizeof(line), "late: %u frames (ms mean/max)", sLate.frames);
+    for (int i = 0; i < LATE_COUNT && at > 0 && at < (int)sizeof(line); ++i)
+        at += snprintf(line + at, sizeof(line) - at, " %s %.1f/%.1f", names[i],
+                       sLate.sum[i] / sLate.frames, sLate.max[i]);
+    CtrLog_Write(CTR_LOG_VIDEO, "%s", line);
+    memset(&sLate, 0, sizeof(sLate));
 }
 
 /* ── The voxel world (3ds_video.c RenderVoxel and what it calls) ─────── */
@@ -1631,7 +1870,8 @@ static void CaptureComposite(void)
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     for (int y = 0; y < TOP_H; y++)
         for (int x = 0; x < TOP_W; x++)
-            sTop[y * TOP_W + x] = full[(int)((y + 0.5f) * sRenderScale) * w + (int)((x + 0.5f) * sRenderScale)];
+            sCaptureTop[y * TOP_W + x] = full[(int)((y + 0.5f) * sRenderScale) * w + (int)((x + 0.5f) * sRenderScale)];
+    sCaptureComposited = true;
     snprintf(path, sizeof(path), "%s/capture_top_hd.rgba", AndroidHost_FilesDir());
     if ((f = fopen(path, "wb")))
     {
@@ -3027,7 +3267,9 @@ static bool VoxelFrame(bool *blankOut, float *fade2d)
     CtrVoxel_SetSwoop(swoop.camera, swoop.height, swoop.cards, swoop.shadows);
     sOverlayFieldObjs = !swoop.cards;
     CtrVoxel_SetStereo(0.0f);
+    uint64_t updateStart = svcGetSystemTick();
     bool voxel = overworld && CtrVoxel_Update();
+    LateSpan(LATE_UPDATE, updateStart);
     bool blank = overworld && !voxel && CtrVoxel_IsWarmingUp() && sFieldMode != FIELD_MODE_PIXEL;
     unsigned mode = !field ? FIELD_MODE_NONE : voxel ? FIELD_MODE_VOXEL : blank ? sFieldMode : FIELD_MODE_PIXEL;
 
@@ -3086,11 +3328,21 @@ void CtrVideo_Present(void)
     sHud = NULL;
     sBattleWorld = false;
     SyncWindows();
+    /* The day/night light, sun and moonlight for this frame, as 3ds_video.c
+     * does before its palette: the voxel world (CtrVoxel_Update, _Draw) only
+     * reads them (CtrDayNight_Get, _GetSun). Without it they moved only when
+     * something else asked for the clock, such as the bottom screen. */
+    CtrDayNight_Update();
     if (sSurf[0] != EGL_NO_SURFACE)
         eglMakeCurrent(sDpy, sSurf[0], sSurf[0], sCtx);
     else if (sSurf[1] != EGL_NO_SURFACE)
         eglMakeCurrent(sDpy, sSurf[1], sSurf[1], sCtx);
-    if (!sHoldTop && sMem.regs)
+    sBottomInUse = sMem.regs && !sStage && BottomWindowScreen(sCentred);
+    if (sBottomInUse)
+        RenderBottomWindow();
+    /* The top screen keeps what it showed while the game's screen is below. */
+    bool holdTop = sHoldTop || sBottomInUse;
+    if (!holdTop && sMem.regs)
     {
         DetectPaletteFade();
         RecordScroll();
@@ -3147,7 +3399,7 @@ void CtrVideo_Present(void)
             RenderTop();
         }
     }
-    if (!sHoldTop && sVoxelReady)
+    if (!holdTop && sVoxelReady)
         BoxFrame();
     if (AndroidLog_FatalReason())
     {
@@ -3180,7 +3432,7 @@ void CtrVideo_Present(void)
             ComposeStage();
             composed = true;
         }
-        if (!sHoldTop && VoxelSwoop_Active(&sSwoop) && (swoop.flash > 0.005f || swoop.bloom > 0.005f) && sVoxelReady)
+        if (!holdTop && VoxelSwoop_Active(&sSwoop) && (swoop.flash > 0.005f || swoop.bloom > 0.005f) && sVoxelReady)
         {
             /* The swoop's light over whichever field is drawn. */
             if (!composed)
@@ -3197,9 +3449,9 @@ void CtrVideo_Present(void)
          * bottom) keeps the picture it showed last: the composite, when
          * that was the voxel world or a laid-out battle - sTop then holds
          * only what was laid over it. */
-        if (sHoldTop && sTopComposed && sVoxelReady)
+        if (holdTop && sTopComposed && sVoxelReady)
             composed = true;
-        else if (!sHoldTop)
+        else if (!holdTop)
             sTopComposed = composed;
         if (composed)
         {
@@ -3230,26 +3482,38 @@ void CtrVideo_Present(void)
             }
             Capture();
         }
+        uint64_t screenStart = svcGetSystemTick();
+        /* Up to here: the update and the world's and screens' draws issued. */
+        sLatePart[LATE_DRAW] = CtrPlatform_TickMs(screenStart - frameStart) - sLatePart[LATE_UPDATE];
         DrawScreen(HOST_SCREEN_TOP, topTex, TOP_W, TOP_H, 0);
+        LateSpan(LATE_TOP, screenStart);
+        screenStart = svcGetSystemTick();
         DrawScreen(HOST_SCREEN_BOTTOM, sBottomTex, CTR_BOTTOM_WIDTH, CTR_BOTTOM_HEIGHT, 1);
+        LateSpan(LATE_BOTTOM, screenStart);
     }
     else if (AndroidHost_TakeCaptureRequest())
         Capture();
-    if (!sHoldTop)
+    if (!holdTop)
         VoxelSwoopStep(voxel);
     /* The voxel world builds what comes next in what is left of the frame. */
     if (sVoxelReady)
     {
         if (voxel || battleWorld)
         {
+            uint64_t afterStart = svcGetSystemTick();
             CtrVoxel_SetFrameReserve(AndroidPlatform_FrameReserveMs());
             CtrVoxel_AfterSubmit(frameStart);
+            LateSpan(LATE_AFTER, afterStart);
         }
         else
             CtrVoxel_Idle();
     }
+    LateFrame(frameStart);
     sStats.frames++;
     sFpsFrames++;
+#if CTR_SHOW_FPS
+    UpdateOverlayFps();
+#endif
     uint64_t now = CtrPlatform_Milliseconds();
     if (!sFpsStart)
         sFpsStart = now;
@@ -3258,6 +3522,7 @@ void CtrVideo_Present(void)
         sStats.fps = sFpsFrames * 1000.0f / (float)(now - sFpsStart);
         CtrLog_Write(CTR_LOG_VIDEO, "fps %.1f, game %.1f ms, wait %.1f ms", sStats.fps,
                      CtrPlatform_GetTiming()->gameMs, sStats.waitMs);
+        LateLog();
         if (voxel)
         {
             const CtrVoxelStats *v = CtrVoxel_GetStats();

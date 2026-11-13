@@ -263,4 +263,7 @@ Thread threadCreate(ThreadFunc entry, void *arg, size_t stackSize, int prio, int
 Result threadJoin(Thread thread, u64 timeoutNs);
 void threadFree(Thread thread);
 
+/* ── Local wireless (UDS) over Bluetooth LE ─────────────────────────── */
+#include "3ds_uds.h"
+
 #endif

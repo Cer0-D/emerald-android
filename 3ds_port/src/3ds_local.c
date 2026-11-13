@@ -82,7 +82,14 @@ static const char kMagic[4] = {'E', 'M', '3', 'L'};
 #define NODE_SLOTS 17     /* UDS node ids are 1-16 */
 #define OUT_QUEUE 128     /* messages to one system not yet acknowledged */
 #define MSG_MAX 168       /* the largest message: an advert, or 160 bytes of data */
+#ifdef PLATFORM_ANDROID
+/* Over Bluetooth LE (android_port/src/android_uds.c) the channel itself is
+ * reliable and in order: nothing is lost, an ack is only late, and sending
+ * again then only adds to what is already behind. Kept as a last resort. */
+#define RESEND_MS 1000
+#else
 #define RESEND_MS 100     /* unacknowledged this long: sent again */
+#endif
 #define ACK_DELAY_MS 30   /* an ack alone waits this long for a message to ride on */
 #define EVENT_QUEUE 512
 #define FRAME_MAX 1400    /* a UDS data frame takes 0x5C6 bytes */
@@ -405,7 +412,7 @@ static void SendFrame(uint16_t to, uint32_t bodyLen)
     /* UDS_CHECK_SENDTO_FATALERROR, which -Wsign-compare rejects: that one
      * error only means the frame wasn't sent. */
     if (R_FAILED(ret) && (u32)ret != 0xC86113F0u)
-        CtrLog_Write(CTR_LOG_ERROR, "local: send to %u failed (%08lx)", to, ret);
+        CtrLog_Write(CTR_LOG_ERROR, "local: send to %u failed (%08lx)", to, (unsigned long)ret);
 }
 
 /* What's due to one system: messages not sent yet, and when the oldest has
@@ -476,7 +483,7 @@ static void ReadFrames(void)
         {
             static unsigned told;
             if (told++ < 8)
-                CtrLog_Write(CTR_LOG_ERROR, "local: receive failed (%08lx)", ret);
+                CtrLog_Write(CTR_LOG_ERROR, "local: receive failed (%08lx)", (unsigned long)ret);
             break;
         }
         if (got == 0)
@@ -511,7 +518,7 @@ static void LeaveNetwork(bool quiet)
     unbound = udsUnbind(&sL.bind);
     sL.hosting = false;
     if (R_FAILED(left) || R_FAILED(unbound))
-        CtrLog_Write(CTR_LOG_ERROR, "local: leaving: %08lx, unbinding: %08lx", left, unbound);
+        CtrLog_Write(CTR_LOG_ERROR, "local: leaving: %08lx, unbinding: %08lx", (unsigned long)left, (unsigned long)unbound);
     else if (!quiet)
         CtrLog_Write(CTR_LOG_GAME, "local: left the session");
 }
@@ -529,7 +536,7 @@ static void UpdateNodes(void)
     /* Not in a network any more: the host went, or we were sent away. */
     if (st.status != 6 && st.status != 9 && st.status != 10)
     {
-        CtrLog_Write(CTR_LOG_GAME, "local: the session ended (status %lu)", st.status);
+        CtrLog_Write(CTR_LOG_GAME, "local: the session ended (status %lu)", (unsigned long)st.status);
         LeaveNetwork(false);
         EndSession(LOCAL_SESSION_NONE);
         return;
@@ -577,7 +584,7 @@ static bool StartUds(void)
             return true;
         }
     }
-    CtrLog_Write(CTR_LOG_ERROR, "local: udsInit failed (%08lx)", ret);
+    CtrLog_Write(CTR_LOG_ERROR, "local: udsInit failed (%08lx)", (unsigned long)ret);
     return false;
 }
 
@@ -632,7 +639,8 @@ static bool EnsureIdle(void)
     ret = udsGetConnectionStatus(&st);
     if (R_SUCCEEDED(ret) && st.status == STATUS_IDLE)
         return true;
-    CtrLog_Write(CTR_LOG_GAME, "local: wireless not idle (%08lx, status %lu): closing", ret, R_SUCCEEDED(ret) ? st.status : 0);
+    CtrLog_Write(CTR_LOG_GAME, "local: wireless not idle (%08lx, status %lu): closing", (unsigned long)ret,
+                 (unsigned long)(R_SUCCEEDED(ret) ? st.status : 0));
     if (R_SUCCEEDED(ret) && st.status == STATUS_HOST)
         ret = udsDestroyNetwork();
     else if (R_SUCCEEDED(ret))
@@ -691,7 +699,7 @@ static bool Connect(const udsNetworkScanInfo *net)
 
     if (R_FAILED(ret))
     {
-        CtrLog_Write(CTR_LOG_ERROR, "local: joining failed (%08lx)", ret);
+        CtrLog_Write(CTR_LOG_ERROR, "local: joining failed (%08lx)", (unsigned long)ret);
         return false;
     }
     sL.hosting = false;
@@ -727,7 +735,7 @@ static bool JoinNearby(uint8_t kind, uint32_t lookMs, bool *otherBuild)
 
         if (R_FAILED(ret))
         {
-            CtrLog_Write(CTR_LOG_ERROR, "local: scan failed (%08lx)", ret);
+            CtrLog_Write(CTR_LOG_ERROR, "local: scan failed (%08lx)", (unsigned long)ret);
             free(nets);
             /* Once more from scratch; then give up for this time. */
             if (++failures > 1 || !RestartUds())
@@ -764,20 +772,20 @@ static bool HostSession(uint8_t kind)
                            UDS_DEFAULT_RECVBUFSIZE);
     if (R_FAILED(ret))
     {
-        CtrLog_Write(CTR_LOG_ERROR, "local: hosting failed (%08lx)", ret);
+        CtrLog_Write(CTR_LOG_ERROR, "local: hosting failed (%08lx)", (unsigned long)ret);
         if (!RestartUds())
             return false;
         ret = udsCreateNetwork(&net, sPassphrase, strlen(sPassphrase) + 1, &sL.bind, DATA_CHANNEL,
                                UDS_DEFAULT_RECVBUFSIZE);
         if (R_FAILED(ret))
         {
-            CtrLog_Write(CTR_LOG_ERROR, "local: hosting failed again (%08lx)", ret);
+            CtrLog_Write(CTR_LOG_ERROR, "local: hosting failed again (%08lx)", (unsigned long)ret);
             return false;
         }
     }
     ret = udsSetApplicationData(&app, sizeof(app));
     if (R_FAILED(ret))
-        CtrLog_Write(CTR_LOG_ERROR, "local: beacon data not set (%08lx)", ret);
+        CtrLog_Write(CTR_LOG_ERROR, "local: beacon data not set (%08lx)", (unsigned long)ret);
     sL.hosting = true;
     sL.nextMergeMs = LocalLink_Milliseconds() + MERGE_MS + (uint32_t)(rand() % MERGE_JITTER_MS);
     return true;
@@ -856,7 +864,7 @@ static void MergeAlone(void)
         ret = udsScanBeacons(scanBuffer, sizeof(scanBuffer), &nets, &total, COMM_ID, 0, NULL, true);
         if (R_FAILED(ret))
         {
-            CtrLog_Write(CTR_LOG_GAME, "local: no scanning while hosting (%08lx): closing the session to look", ret);
+            CtrLog_Write(CTR_LOG_GAME, "local: no scanning while hosting (%08lx): closing the session to look", (unsigned long)ret);
             scanHostingFails = true;
             free(nets);
             nets = NULL;
@@ -869,7 +877,7 @@ static void MergeAlone(void)
         ret = EnsureIdle() ? udsScanBeacons(scanBuffer, sizeof(scanBuffer), &nets, &total, COMM_ID, 0, NULL, false) : -1;
         if (R_FAILED(ret))
         {
-            CtrLog_Write(CTR_LOG_ERROR, "local: looking while alone failed (%08lx)", ret);
+            CtrLog_Write(CTR_LOG_ERROR, "local: looking while alone failed (%08lx)", (unsigned long)ret);
             free(nets);
             nets = NULL;
             total = 0;
@@ -966,7 +974,7 @@ static void DropSilent(uint32_t now)
         if (!silent)
             continue;
         CtrLog_Write(CTR_LOG_GAME, "local: player %u silent for %lu ms, a message waiting %lu ms: gone", id,
-                     now - n->heardMs, now - n->out[n->outHead].firstMs);
+                     (unsigned long)(now - n->heardMs), (unsigned long)(now - n->out[n->outHead].firstMs));
         if (!sL.hosting && id == 1) /* the host */
         {
             LeaveNetwork(false);
@@ -1059,8 +1067,9 @@ static void LocalThread(void *unused)
             {
                 if (sL.stats.sinceMs)
                     CtrLog_Write(CTR_LOG_GAME, "local: %u s: %lu wakes, %lu reads, %lu frames in, %lu out, %lu messages resent",
-                                 (unsigned)((now - sL.stats.sinceMs) / 1000), sL.stats.wakes, sL.stats.pulls,
-                                 sL.stats.framesIn, sL.stats.framesOut, sL.stats.resent);
+                                 (unsigned)((now - sL.stats.sinceMs) / 1000), (unsigned long)sL.stats.wakes,
+                                 (unsigned long)sL.stats.pulls, (unsigned long)sL.stats.framesIn,
+                                 (unsigned long)sL.stats.framesOut, (unsigned long)sL.stats.resent);
                 memset(&sL.stats, 0, sizeof(sL.stats));
                 sL.stats.sinceMs = now;
             }
@@ -1245,7 +1254,7 @@ void LocalLink_Send(uint16_t dest, const void *data, uint32_t len)
         return;
     if (len > sizeof(((struct LocalEvent *)0)->data))
     {
-        CtrLog_Write(CTR_LOG_ERROR, "local: message of %lu bytes cut", len);
+        CtrLog_Write(CTR_LOG_ERROR, "local: message of %lu bytes cut", (unsigned long)len);
         len = sizeof(((struct LocalEvent *)0)->data);
     }
     LightLock_Lock(&sL.lock);

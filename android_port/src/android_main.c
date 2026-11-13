@@ -6,6 +6,7 @@
  * which is also the thread that renders (android_video.c).
  */
 #include <jni.h>
+#include <android/log.h>
 #include <android/native_window_jni.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -14,6 +15,7 @@
 #include <unistd.h>
 
 #include "android_host.h"
+#include "android_lowmem.h"
 #include "3ds_platform.h"
 #include "3ds_video.h"
 
@@ -189,8 +191,14 @@ JNIEXPORT void JNICALL FN(nativeInit)(JNIEnv *env, jclass cls, jstring dir, jstr
 
         sGameStarted = true;
         pthread_attr_init(&attr);
-        /* The game's stack: deep battle script recursion and big locals. */
-        pthread_attr_setstacksize(&attr, 8u << 20);
+        /* The game's stack: deep battle script recursion and big locals.
+         * Below 4 GiB (android_lowmem.h): the game keeps the addresses of its
+         * locals in 32 bits too. */
+        void *stack = AndroidLow_Stack(8u << 20);
+        if (stack != NULL)
+            pthread_attr_setstack(&attr, stack, 8u << 20);
+        else
+            pthread_attr_setstacksize(&attr, 8u << 20);
         pthread_create(&sGameThread, &attr, GameThread, NULL);
         pthread_attr_destroy(&attr);
     }
@@ -289,4 +297,37 @@ JNIEXPORT void JNICALL FN(nativeCapture)(JNIEnv *env, jclass cls)
 {
     (void)env; (void)cls;
     atomic_store(&sCapture, true);
+}
+
+/* ── Loading ──────────────────────────────────────────────────────────── */
+/*
+ * Java loads libemeraldboot.so (android_port/boot), which puts this library
+ * below 4 GiB and calls this: a library loaded that way is not one the
+ * runtime looks in for Java_... names, so the methods are registered here.
+ */
+JNIEXPORT jint AndroidMain_OnLoad(JavaVM *vm, JNIEnv *env)
+{
+    static const JNINativeMethod methods[] = {
+        {"nativeInit", "(Ljava/lang/String;Ljava/lang/String;)V", (void *)FN(nativeInit)},
+        {"nativeSurface", "(ILjava/lang/Object;)V", (void *)FN(nativeSurface)},
+        {"nativeKey", "(IZ)V", (void *)FN(nativeKey)},
+        {"nativeAxis", "(FF)V", (void *)FN(nativeAxis)},
+        {"nativeTouch", "(IFFII)V", (void *)FN(nativeTouch)},
+        {"nativePause", "(Z)V", (void *)FN(nativePause)},
+        {"nativeCapture", "()V", (void *)FN(nativeCapture)},
+    };
+    jclass cls = (*env)->FindClass(env, "com/cer0/emerald/MainActivity");
+
+    if (cls == NULL)
+        return JNI_ERR;
+    if ((*env)->RegisterNatives(env, cls, methods, sizeof(methods) / sizeof(methods[0])) != 0)
+        return JNI_ERR;
+    (*env)->DeleteLocalRef(env, cls);
+    /* Local wireless play's radio (android_uds.c, LocalBluetooth.java). */
+    {
+        extern jint AndroidUds_OnLoad(JavaVM *vm, JNIEnv *env);
+        if (AndroidUds_OnLoad(vm, env) == JNI_ERR)
+            __android_log_print(ANDROID_LOG_ERROR, "Emerald", "local wireless: LocalBluetooth not found");
+    }
+    return JNI_VERSION_1_6;
 }

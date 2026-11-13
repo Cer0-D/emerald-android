@@ -12,6 +12,7 @@
 #include <android/log.h>
 
 #include "android_host.h"
+#include "android_lowmem.h"
 #include "3ds_platform.h"
 #include "3ds_daynight.h"
 #include "3ds_data.h"
@@ -37,12 +38,16 @@ const CtrTiming *CtrPlatform_GetTiming(void) { return &sTiming; }
 void CtrPlatform_NoteBottom(float ms) { sTiming.bottomMs = ms; }
 
 /* ── Threads (the shim's threadCreate, and CtrPlatform_StartThread) ───── */
+/* Their stacks are below 4 GiB (android_lowmem.h): game code takes the
+ * address of a local and keeps it in 32 bits. */
 struct AndroidThread
 {
     pthread_t thread;
     ThreadFunc entry;
     void *arg;
     bool detached;
+    void *stack;
+    size_t stackSize;
 };
 
 static void *ThreadMain(void *p)
@@ -69,12 +74,18 @@ Thread threadCreate(ThreadFunc entry, void *arg, size_t stackSize, int prio, int
     pthread_attr_init(&attr);
     if (stackSize < (256u << 10))
         stackSize = 256u << 10;
-    pthread_attr_setstacksize(&attr, stackSize);
+    t->stack = AndroidLow_Stack(stackSize);
+    t->stackSize = stackSize;
+    if (t->stack != NULL)
+        pthread_attr_setstack(&attr, t->stack, stackSize);
+    else
+        pthread_attr_setstacksize(&attr, stackSize);
     if (detached)
         pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
     if (pthread_create(&t->thread, &attr, ThreadMain, t) != 0)
     {
         pthread_attr_destroy(&attr);
+        AndroidLow_FreeStack(t->stack, t->stackSize);
         free(t);
         return NULL;
     }
@@ -86,7 +97,13 @@ Result threadJoin(Thread thread, u64 timeoutNs)
 {
     (void)timeoutNs;
     if (thread && thread != (Thread)1)
+    {
         pthread_join(thread->thread, NULL);
+        /* Joined: nothing runs on its stack any more. A detached thread's
+         * stack is kept: it would still be running on it. */
+        AndroidLow_FreeStack(thread->stack, thread->stackSize);
+        thread->stack = NULL;
+    }
     return 0;
 }
 
@@ -165,6 +182,9 @@ static void HandlePause(void)
     if (AndroidHost_Paused())
     {
         CtrLog_Write(CTR_LOG_BOOT, "suspend");
+        /* Out of sight, out of the session: the others see the link end now
+         * instead of a player gone silent (3ds_platform.c does it at sleep). */
+        LocalLink_LeaveBeforeSleep();
         AndroidAudio_SetPaused(true);
         AndroidHost_WaitResumed();
         AndroidAudio_SetPaused(false);
@@ -174,6 +194,7 @@ static void HandlePause(void)
     {
         sSeenResumes = resumes;
         CtrDayNight_Resume();
+        LocalLink_AfterWake();
         CtrInput_Clear();
         CtrBottom_OnResume();
         sLastFrame = CtrPlatform_Milliseconds();
