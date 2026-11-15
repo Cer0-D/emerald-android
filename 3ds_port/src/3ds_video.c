@@ -7017,6 +7017,7 @@ fail:
     return false;
 }
 
+int CtrVideo_SingleScreen(void) { return 0; }
 void CtrVideo_Bind(CtrVideoMemory memory)
 {
     sMemory = memory;

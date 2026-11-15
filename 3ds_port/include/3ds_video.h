@@ -25,6 +25,10 @@ extern unsigned short gDisplayWidth;
 #else
 #define CTR_GAME_WIDTH 400
 #endif
+/* No second display (Android, a phone): the bottom screen is a window over
+ * the top one (CtrBottom_PanelShown), and the PC's boxes are on the top
+ * screen as on the GBA. Never on a 3DS. */
+int CtrVideo_SingleScreen(void);
 #define CTR_GAME_HEIGHT 240
 
 /*

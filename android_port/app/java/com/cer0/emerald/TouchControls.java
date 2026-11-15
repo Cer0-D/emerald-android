@@ -88,9 +88,11 @@ final class TouchControls extends View {
         mBar[L] = new RectF(m * 0.6f, top, m * 0.6f + bw, top + bh);
         mBar[R] = new RectF(w - m * 0.6f - bw, top, w - m * 0.6f, top + bh);
         float sw = h * 0.2f, sh = h * 0.075f, bottom = h - h * 0.05f;
-        mBar[SELECT] = new RectF(mPadX - sw / 2, bottom - sh, mPadX + sw / 2, bottom);
-        float sx = (mRoundX[A] + mRoundX[B]) / 2;
-        mBar[START] = new RectF(sx - sw / 2, bottom - sh, sx + sw / 2, bottom);
+        // Select and Start mirror each other, a third of the way in from
+        // under the d-pad towards the middle.
+        float selX = mPadX + (w / 2f - mPadX) * 0.3f, startX = w - selX;
+        mBar[SELECT] = new RectF(selX - sw / 2, bottom - sh, selX + sw / 2, bottom);
+        mBar[START] = new RectF(startX - sw / 2, bottom - sh, startX + sw / 2, bottom);
         mLine.setStrokeWidth(Math.max(2f, h * 0.004f));
         mPadX += mSafeX;
         mPadY += mSafeY;
@@ -121,14 +123,36 @@ final class TouchControls extends View {
         return 0;
     }
 
+    /* The finger that went down on no button: the top screen's touch (the
+     * bottom screen's window on a single screen), followed until let go. */
+    private int mFree = -1;
+
     @Override public boolean onTouchEvent(MotionEvent e) {
         int action = e.getActionMasked(), lifted = -1;
         if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP)
             lifted = e.getActionIndex();
+        if ((action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) && mFree < 0) {
+            int i = e.getActionIndex();
+            if (hit(e.getX(i), e.getY(i)) == 0) {
+                mFree = e.getPointerId(i);
+                MainActivity.nativeTouchTop(0, e.getX(i), e.getY(i), getWidth(), getHeight());
+            }
+        }
         int held = 0;
         if (action != MotionEvent.ACTION_CANCEL)
             for (int i = 0; i < e.getPointerCount(); i++)
-                if (i != lifted) held |= hit(e.getX(i), e.getY(i));
+                if (i != lifted && e.getPointerId(i) != mFree) held |= hit(e.getX(i), e.getY(i));
+        if (mFree >= 0) {
+            int i = e.findPointerIndex(mFree);
+            boolean up = action == MotionEvent.ACTION_CANCEL || i < 0 || i == lifted;
+            if (up) {
+                float x = i >= 0 ? e.getX(i) : 0, y = i >= 0 ? e.getY(i) : 0;
+                MainActivity.nativeTouchTop(action == MotionEvent.ACTION_CANCEL ? 3 : 1, x, y, getWidth(), getHeight());
+                mFree = -1;
+            } else if (action == MotionEvent.ACTION_MOVE) {
+                MainActivity.nativeTouchTop(2, e.getX(i), e.getY(i), getWidth(), getHeight());
+            }
+        }
         apply(held);
         return true;
     }

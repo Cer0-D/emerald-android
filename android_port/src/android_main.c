@@ -282,6 +282,35 @@ JNIEXPORT void JNICALL FN(nativeTouch)(JNIEnv *env, jclass cls, jint action, jfl
     pthread_mutex_unlock(&sLock);
 }
 
+JNIEXPORT void JNICALL FN(nativeSetSingleScreen)(JNIEnv *env, jclass cls, jboolean single)
+{
+    (void)env; (void)cls;
+    AndroidVideo_SetSingleScreen(single);
+}
+
+/*
+ * A touch on the top screen (w x h): on a single screen, one that lands in
+ * the bottom screen's window is that screen's touch, followed until it is
+ * let go; any other is nobody's.
+ */
+JNIEXPORT void JNICALL FN(nativeTouchTop)(JNIEnv *env, jclass cls, jint action, jfloat x, jfloat y, jint w, jint h)
+{
+    static bool inPanel;
+    int px, py, pw, ph;
+
+    if (action == 0)
+    {
+        AndroidVideo_PanelRect(w, h, &px, &py, &pw, &ph);
+        inPanel = AndroidVideo_PanelShown() && x >= px && x < px + pw && y >= py && y < py + ph;
+    }
+    if (!inPanel)
+        return;
+    AndroidVideo_PanelRect(w, h, &px, &py, &pw, &ph);
+    FN(nativeTouch)(env, cls, action, x - px, y - py, pw, ph);
+    if (action == 1 || action == 3)
+        inPanel = false;
+}
+
 JNIEXPORT void JNICALL FN(nativePause)(JNIEnv *env, jclass cls, jboolean paused)
 {
     (void)env; (void)cls;
@@ -312,6 +341,8 @@ JNIEXPORT jint AndroidMain_OnLoad(JavaVM *vm, JNIEnv *env)
     static const JNINativeMethod methods[] = {
         {"nativeInit", "(Ljava/lang/String;Ljava/lang/String;II)V", (void *)FN(nativeInit)},
         {"nativeSurface", "(ILjava/lang/Object;)V", (void *)FN(nativeSurface)},
+        {"nativeSetSingleScreen", "(Z)V", (void *)FN(nativeSetSingleScreen)},
+        {"nativeTouchTop", "(IFFII)V", (void *)FN(nativeTouchTop)},
         {"nativeKey", "(IZ)V", (void *)FN(nativeKey)},
         {"nativeAxis", "(FF)V", (void *)FN(nativeAxis)},
         {"nativeTouch", "(IFFII)V", (void *)FN(nativeTouch)},

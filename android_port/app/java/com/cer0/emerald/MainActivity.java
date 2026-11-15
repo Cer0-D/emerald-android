@@ -39,6 +39,10 @@ public class MainActivity extends Activity {
     static native void nativeAxis(float x, float y);
     static native void nativeTouch(int action, float x, float y, int w, int h);
     static native void nativePause(boolean paused);
+    // No second display: the bottom screen is a window on the top one,
+    // shown with START, and its touches come from the top (nativeTouchTop).
+    static native void nativeSetSingleScreen(boolean single);
+    static native void nativeTouchTop(int action, float x, float y, int w, int h);
     static native void nativeCapture();
 
     public static final int SCREEN_TOP = 0, SCREEN_BOTTOM = 1;
@@ -195,8 +199,15 @@ public class MainActivity extends Activity {
         if (forced > 0) { topW = forced * 4; topH = 960; }
         nativeInit(Languages.root(this, code).getAbsolutePath(), Setup.ENGINE_DIR, topW, topH);
         handleIntent(getIntent());
+        nativeSetSingleScreen(bottomDisplay() == null);
         SurfaceView top = new SurfaceView(this);
         top.getHolder().addCallback(new ScreenCallback(SCREEN_TOP));
+        // Touches the on-screen controls do not take (or all of them, with a
+        // controller connected): the bottom screen's window's, if it is up.
+        top.setOnTouchListener((view, e) -> {
+            nativeTouchTop(e.getActionMasked(), e.getX(), e.getY(), view.getWidth(), view.getHeight());
+            return true;
+        });
         android.widget.FrameLayout frame = new android.widget.FrameLayout(this);
         frame.addView(top);
         mControls = new TouchControls(this);
@@ -247,13 +258,20 @@ public class MainActivity extends Activity {
         handleIntent(i);
     }
 
-    private void showBottom() {
-        if (mBottom != null) return;
+    /* A second display for the bottom screen (the Thor's), or null. */
+    private Display bottomDisplay() {
         DisplayManager dm = (DisplayManager) getSystemService(DISPLAY_SERVICE);
         Display[] ds = dm.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION);
-        if (ds.length == 0) { Log.w(TAG, "no second display"); return; }
-        Log.i(TAG, "bottom display " + ds[0].getDisplayId() + " " + ds[0].getName());
-        mBottom = new BottomPresentation(this, ds[0]);
+        return ds.length > 0 ? ds[0] : null;
+    }
+
+    private void showBottom() {
+        if (mBottom != null) return;
+        Display d = bottomDisplay();
+        nativeSetSingleScreen(d == null);
+        if (d == null) { Log.w(TAG, "no second display: single screen"); return; }
+        Log.i(TAG, "bottom display " + d.getDisplayId() + " " + d.getName());
+        mBottom = new BottomPresentation(this, d);
         mBottom.show();
     }
 

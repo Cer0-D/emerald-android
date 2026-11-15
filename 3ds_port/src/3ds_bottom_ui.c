@@ -148,6 +148,7 @@ void CtrPokenavList_SetSelected(u16 selected);
 void CtrPokenavMatchCall_SetOption(u16 cursor);
 void CtrMonMarkings_SetCursor(s8 cursor);
 bool8 CtrStorage_IsOpen(void);
+bool8 CtrStorage_Active(void);
 int CtrTitleScreen_RayquazaBg(void);
 void CtrStorage_Tap(s16 x, s16 y);
 void CtrSummary_Tap(s16 x, s16 y);
@@ -2588,6 +2589,11 @@ static u8 CurrentMode(void)
      * bottom one dark under them. */
     if (CtrVideo_StageZoomed())
         return MODE_OFF;
+    /* A single screen: the PC's boxes (and the summary and bag they open)
+     * and battles (their menus, bag and party) are the top screen's, as on
+     * the GBA, and no session of this one. */
+    if (CtrBottom_Vanilla())
+        return gMain.inBattle ? MODE_BATTLE_INFO : MODE_FIELD;
     if (CtrPokenav_IsOpen())
         return MODE_POKENAV;
     if (CtrPokedex_IsOpen())
@@ -2713,7 +2719,9 @@ bool8 CtrBattleMenu_Active(void)
     /* Link battles too (local wireless): the player's choices go through the
      * same controller. Drawn on the top screen, the menu ran into the wide
      * text box. Not for a recorded battle played back: nobody chooses. */
-    return sRes.ready && !(gBattleTypeFlags & BATTLE_TYPE_RECORDED);
+    /* Nor on a single screen: the game's own menus, on the top screen as on
+     * the GBA (CtrBottom_Vanilla). */
+    return sRes.ready && !(gBattleTypeFlags & BATTLE_TYPE_RECORDED) && !CtrVideo_SingleScreen();
 }
 
 void CtrBattleMenu_Begin(void)
@@ -7017,7 +7025,10 @@ static void ProcessKeys(u8 mode)
 {
     const CtrInput *in = CtrInput_Get();
     u16 down = in->down;
-    bool8 x = (in->physicalDown & CTR_KEY_X) != 0;
+    /* Without a second screen START is X: it opens the bottom screen's
+     * window with the buttons in it (CtrBottom_PanelShown), and closes it. */
+    bool8 x = (in->physicalDown & CTR_KEY_X) != 0
+           || (CtrVideo_SingleScreen() && (in->physicalDown & CTR_KEY_START) != 0);
 
     if (sSwallow && !(in->held & CTR_KEY_GAME) && !(in->physicalHeld & (CTR_KEY_X | CTR_KEY_Y)))
         sSwallow = FALSE;
@@ -7837,3 +7848,16 @@ void CtrBottom_Frame(void)
     BottomProfile(frames, mode, ticks, 0);
 }
 
+
+bool CtrBottom_PanelShown(void)
+{
+    if (!CtrVideo_SingleScreen() || !sInGame)
+        return false;
+    return sFocus != FOCUS_NONE || sInside != INSIDE_NONE || sMapFly || sSession.active || CtrVideo_BottomInUse()
+        || CtrVideo_BottomWhole();
+}
+
+bool CtrBottom_Vanilla(void)
+{
+    return CtrVideo_SingleScreen() && sInGame && (CtrStorage_Active() || gMain.inBattle);
+}

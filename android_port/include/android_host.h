@@ -61,6 +61,11 @@ void AndroidHost_GetInput(AndroidHostInput *out);
 /* The top picture's width for a w x h window (DISPLAY_WIDTH), set before the
  * game starts. */
 void AndroidVideo_ChooseWidth(int w, int h);
+/* No second display: the bottom screen becomes a window on the top one. */
+void AndroidVideo_SetSingleScreen(bool single);
+/* That window: whether it is shown, and where in a w x h top view. */
+bool AndroidVideo_PanelShown(void);
+void AndroidVideo_PanelRect(int w, int h, int *x, int *y, int *vw, int *vh);
 void AndroidVideo_BottomViewport(int w, int h, int *x, int *y, int *vw, int *vh);
 void AndroidVideo_WholeTouch(float *x, float *y);
 

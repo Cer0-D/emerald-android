@@ -1090,8 +1090,17 @@ static float WindowCover(int x, int y)
  * meanwhile (MODE_STORAGE) and sends taps into the picture; without them
  * drawn, the PC showed nothing and the top screen stayed frozen.
  */
+/* No second display (AndroidVideo_SetSingleScreen): the PC's boxes and
+ * battles, with what they open, stay on the top screen as on the GBA
+ * (CtrBottom_Vanilla); the rest of the bottom screen's game screens show in
+ * its window there (CtrBottom_PanelShown). */
+static bool sSingle;
+static volatile bool sPanelShown;
+
 static bool BottomWholeScreen(unsigned screen)
 {
+    if (sSingle && CtrBottom_Vanilla())
+        return false;
     return screen == CTR_CENTRED_STORAGE || screen == CTR_CENTRED_SUMMARY || screen == CTR_CENTRED_BAG_WHOLE
         || screen == CTR_CENTRED_PARTY_WHOLE || screen == CTR_CENTRED_SHOP || screen == CTR_CENTRED_TRADE_MENU
         || screen == CTR_CENTRED_TRADE || screen == CTR_CENTRED_POKEDEX_CAUGHT;
@@ -1474,7 +1483,7 @@ void CtrVideo_SetNativeMenus(bool on) { sNativeMenus = on; }
 
 static bool BottomWindowScreen(unsigned screen)
 {
-    if (sBottomNative)
+    if (sBottomNative || (sSingle && CtrBottom_Vanilla()))
         return false;
     if (screen == CTR_CENTRED_POKENAV || screen == CTR_CENTRED_CARD)
         return true;
@@ -1552,7 +1561,7 @@ static uint32_t sWinGen[HOST_SCREENS];
 static GLuint sProgram, sTopTex, sBottomTex, sVao;
 /* A whole-screen game picture over the bottom canvas (RenderBottomWhole). */
 static GLuint sWholeTex;
-static GLint sURect, sURotate, sUTex;
+static GLint sURect, sURotate, sUTex, sUColor;
 static struct timespec sNextFrame;
 
 static const char *sVertex =
@@ -1569,9 +1578,12 @@ static const char *sFragment =
     "precision mediump float;\n"
     "uniform sampler2D uTex;\n"
     "uniform int uRotate;\n"
+    "uniform vec4 uColor;\n"
     "in vec2 vUv;\n"
     "out vec4 oColor;\n"
     "void main() {\n"
+    /* 2: a solid colour (the single screen's window frame) */
+    "  if (uRotate == 2) { oColor = uColor; return; }\n"
     /* the bottom canvas: column-major, columns bottom-to-top */
     "  vec2 uv = uRotate == 1 ? vec2(1.0 - vUv.y, vUv.x) : vUv;\n"
     "  oColor = vec4(texture(uTex, uv).rgb, 1.0);\n"
@@ -1638,6 +1650,7 @@ bool CtrVideo_Init(void)
     sURect = glGetUniformLocation(sProgram, "uRect");
     sURotate = glGetUniformLocation(sProgram, "uRotate");
     sUTex = glGetUniformLocation(sProgram, "uTex");
+    sUColor = glGetUniformLocation(sProgram, "uColor");
     glGenVertexArrays(1, &sVao);
     sTopTex = Texture(TOP_W, TOP_H, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
     sBottomTex = Texture(CTR_BOTTOM_HEIGHT, CTR_BOTTOM_WIDTH, GL_RGB565, GL_RGB, GL_UNSIGNED_SHORT_5_6_5);
@@ -1753,6 +1766,36 @@ void AndroidVideo_ChooseWidth(int w, int h)
     if (width > CTR_GAME_WIDTH_MAX) width = CTR_GAME_WIDTH_MAX;
     gDisplayWidth = (unsigned short)width;
     CtrLog_Write(CTR_LOG_VIDEO, "top picture %dx%d for a %dx%d window", width, TOP_H, w, h);
+}
+
+void AndroidVideo_SetSingleScreen(bool single)
+{
+    if (single != sSingle)
+        CtrLog_Write(CTR_LOG_VIDEO, "%s", single ? "single screen: the bottom screen is a window on the top one"
+                                                 : "two screens");
+    sSingle = single;
+}
+
+int CtrVideo_SingleScreen(void) { return sSingle; }
+
+bool AndroidVideo_PanelShown(void) { return sPanelShown; }
+
+/*
+ * The bottom screen's window on a single screen: its own shape, 78% of the
+ * view's height (no more than 90% of its width), centred - the game stays in
+ * sight around it.
+ */
+void AndroidVideo_PanelRect(int w, int h, int *x, int *y, int *vw, int *vh)
+{
+    *vh = (int)(h * 0.78f);
+    *vw = *vh * CTR_BOTTOM_WIDTH / CTR_BOTTOM_HEIGHT;
+    if (*vw > w * 9 / 10)
+    {
+        *vw = w * 9 / 10;
+        *vh = *vw * CTR_BOTTOM_HEIGHT / CTR_BOTTOM_WIDTH;
+    }
+    *x = (w - *vw) / 2;
+    *y = (h - *vh) / 2;
 }
 
 /*
@@ -1875,6 +1918,61 @@ static void DrawFps(int w, int h, float x, float y, float px)
 }
 #endif
 
+/* The game screen laid over the bottom canvas (sWholeShown), in a view of
+ * the canvas at x, y, vw wide. */
+static void DrawWhole(int w, int h, int x, int y, int vw)
+{
+    if (!sWholeShown || !sWholeTex)
+        return;
+    float k = (float)vw / CTR_BOTTOM_WIDTH;
+    float px0 = x + WHOLE_X0 * k, py0 = y + WHOLE_Y0 * k;
+    float px1 = px0 + GBA_W * WHOLE_SCALE * k, py1 = py0 + GBA_H * WHOLE_SCALE * k;
+
+    glBindTexture(GL_TEXTURE_2D, sWholeTex);
+    glUniform1i(sURotate, 0);
+    glUniform4f(sURect, 2.0f * px0 / w - 1.0f, 1.0f - 2.0f * py1 / h,
+                2.0f * px1 / w - 1.0f, 1.0f - 2.0f * py0 / h);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+}
+
+static void SolidRect(int w, int h, float x0, float y0, float x1, float y1, float r, float g, float b, float a)
+{
+    glUniform1i(sURotate, 2);
+    glUniform4f(sUColor, r, g, b, a);
+    glUniform4f(sURect, 2.0f * x0 / w - 1.0f, 1.0f - 2.0f * y1 / h, 2.0f * x1 / w - 1.0f, 1.0f - 2.0f * y0 / h);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+}
+
+static void DrawBottomAt(int w, int h, int x, int y, int vw, int vh)
+{
+    glBindTexture(GL_TEXTURE_2D, sBottomTex);
+    glUniform1i(sURotate, 1);
+    glUniform4f(sURect, 2.0f * x / w - 1.0f, 1.0f - 2.0f * (y + vh) / h,
+                2.0f * (x + vw) / w - 1.0f, 1.0f - 2.0f * y / h);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    DrawWhole(w, h, x, y, vw);
+}
+
+/* The bottom screen as a window over the top one: a soft shadow, a light
+ * frame with a dark rim, and the screen in it. */
+static void DrawPanel(int w, int h)
+{
+    int x, y, vw, vh;
+    float b;
+
+    AndroidVideo_PanelRect(w, h, &x, &y, &vw, &vh);
+    b = vh * 0.012f < 3.0f ? 3.0f : vh * 0.012f;
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    for (int i = 3; i >= 1; i--)
+        SolidRect(w, h, x - b * (2 + i), y - b * (2 + i) + b, x + vw + b * (2 + i), y + vh + b * (2 + i) + b,
+                  0, 0, 0, 0.18f);
+    glDisable(GL_BLEND);
+    SolidRect(w, h, x - 2 * b, y - 2 * b, x + vw + 2 * b, y + vh + 2 * b, 0.90f, 0.93f, 0.96f, 1);
+    SolidRect(w, h, x - b * 0.6f, y - b * 0.6f, x + vw + b * 0.6f, y + vh + b * 0.6f, 0.16f, 0.20f, 0.25f, 1);
+    DrawBottomAt(w, h, x, y, vw, vh);
+}
+
 static void DrawScreen(int screen, GLuint tex, int pw, int ph, int rotate)
 {
     EGLint w = 0, h = 0;
@@ -1908,18 +2006,10 @@ static void DrawScreen(int screen, GLuint tex, int pw, int ph, int rotate)
     glUniform4f(sURect, 2.0f * x / w - 1.0f, 1.0f - 2.0f * (y + vh) / h,
                 2.0f * (x + vw) / w - 1.0f, 1.0f - 2.0f * y / h);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    if (screen == HOST_SCREEN_BOTTOM && sWholeShown && sWholeTex)
-    {
-        float k = (float)vw / CTR_BOTTOM_WIDTH;
-        float px0 = x + WHOLE_X0 * k, py0 = y + WHOLE_Y0 * k;
-        float px1 = px0 + GBA_W * WHOLE_SCALE * k, py1 = py0 + GBA_H * WHOLE_SCALE * k;
-
-        glBindTexture(GL_TEXTURE_2D, sWholeTex);
-        glUniform1i(sURotate, 0);
-        glUniform4f(sURect, 2.0f * px0 / w - 1.0f, 1.0f - 2.0f * py1 / h,
-                    2.0f * px1 / w - 1.0f, 1.0f - 2.0f * py0 / h);
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    }
+    if (screen == HOST_SCREEN_BOTTOM)
+        DrawWhole(w, h, x, y, vw);
+    if (screen == HOST_SCREEN_TOP && sPanelShown)
+        DrawPanel(w, h);
 #if CTR_SHOW_FPS
     if (screen == HOST_SCREEN_TOP && CtrSettings_ShowFps())
         DrawFps(w, h, (float)x, (float)y, (float)vh / (float)ph);
@@ -3928,6 +4018,7 @@ void CtrVideo_Present(void)
         uint64_t screenStart = svcGetSystemTick();
         /* Up to here: the update and the world's and screens' draws issued. */
         sLatePart[LATE_DRAW] = CtrPlatform_TickMs(screenStart - frameStart) - sLatePart[LATE_UPDATE];
+        sPanelShown = sSingle && CtrBottom_PanelShown();
         DrawScreen(HOST_SCREEN_TOP, topTex, TOP_W, TOP_H, 0);
         LateSpan(LATE_TOP, screenStart);
         screenStart = svcGetSystemTick();
