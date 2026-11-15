@@ -175,7 +175,7 @@ static void *GameThread(void *arg)
 /* ── JNI ──────────────────────────────────────────────────────────────── */
 #define FN(name) Java_com_cer0_emerald_MainActivity_##name
 
-JNIEXPORT void JNICALL FN(nativeInit)(JNIEnv *env, jclass cls, jstring dir, jstring romfs)
+JNIEXPORT void JNICALL FN(nativeInit)(JNIEnv *env, jclass cls, jstring dir, jstring romfs, jint topW, jint topH)
 {
     (void)cls;
     const char *d = (*env)->GetStringUTFChars(env, dir, NULL);
@@ -190,6 +190,8 @@ JNIEXPORT void JNICALL FN(nativeInit)(JNIEnv *env, jclass cls, jstring dir, jstr
         pthread_attr_t attr;
 
         sGameStarted = true;
+        /* The game lays its screens out for this width from the start. */
+        AndroidVideo_ChooseWidth(topW, topH);
         pthread_attr_init(&attr);
         /* The game's stack: deep battle script recursion and big locals.
          * Below 4 GiB (android_lowmem.h): the game keeps the addresses of its
@@ -308,7 +310,7 @@ JNIEXPORT void JNICALL FN(nativeCapture)(JNIEnv *env, jclass cls)
 JNIEXPORT jint AndroidMain_OnLoad(JavaVM *vm, JNIEnv *env)
 {
     static const JNINativeMethod methods[] = {
-        {"nativeInit", "(Ljava/lang/String;Ljava/lang/String;)V", (void *)FN(nativeInit)},
+        {"nativeInit", "(Ljava/lang/String;Ljava/lang/String;II)V", (void *)FN(nativeInit)},
         {"nativeSurface", "(ILjava/lang/Object;)V", (void *)FN(nativeSurface)},
         {"nativeKey", "(IZ)V", (void *)FN(nativeKey)},
         {"nativeAxis", "(FF)V", (void *)FN(nativeAxis)},

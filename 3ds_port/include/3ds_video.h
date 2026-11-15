@@ -16,7 +16,12 @@ void CtrVideo_CopiesBegin(void);
 void CtrVideo_CopiesEnd(void);
 
 #ifdef PLATFORM_ANDROID
-#define CTR_GAME_WIDTH 432 /* gba/defines.h DISPLAY_WIDTH */
+/* gba/defines.h DISPLAY_WIDTH: chosen at launch from the top display's shape
+ * (AndroidVideo_ChooseWidth), a whole number of tiles in [MIN, MAX]. */
+extern unsigned short gDisplayWidth;
+#define CTR_GAME_WIDTH ((int)gDisplayWidth)
+#define CTR_GAME_WIDTH_MIN 400
+#define CTR_GAME_WIDTH_MAX 448
 #else
 #define CTR_GAME_WIDTH 400
 #endif

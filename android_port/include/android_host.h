@@ -58,6 +58,9 @@ enum
 void AndroidHost_GetInput(AndroidHostInput *out);
 
 /* Where the 320x240 bottom picture sits in a w x h bottom view (android_video.c). */
+/* The top picture's width for a w x h window (DISPLAY_WIDTH), set before the
+ * game starts. */
+void AndroidVideo_ChooseWidth(int w, int h);
 void AndroidVideo_BottomViewport(int w, int h, int *x, int *y, int *vw, int *vh);
 void AndroidVideo_WholeTouch(float *x, float *y);
 

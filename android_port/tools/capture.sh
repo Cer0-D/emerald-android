@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Asks the running app for a capture of both screens and converts it to PNGs.
 #   android_port/tools/capture.sh [out-dir] [name]
-# Writes <out-dir>/<name>_top.png (432x240) and <name>_bottom.png (320x280).
+# Writes <out-dir>/<name>_top.png (the game's width x 240: 432 on the Thor) and <name>_bottom.png (320x280).
 # The app overwrites its two capture files each time (nothing accumulates).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -21,7 +21,8 @@ adb exec-out cat "$D/capture_bottom.rgb565cm" > "$OUT/$NAME.bottom.raw"
 import sys
 from PIL import Image
 out, name = sys.argv[1], sys.argv[2]
-top = Image.frombytes("RGBA", (432, 240), open(f"{out}/{name}.top.rgba", "rb").read())
+data = open(f"{out}/{name}.top.rgba", "rb").read()
+top = Image.frombytes("RGBA", (len(data) // (240 * 4), 240), data)
 top.convert("RGB").save(f"{out}/{name}_top.png")
 raw = open(f"{out}/{name}.bottom.raw", "rb").read()
 img = Image.new("RGB", (320, 280))

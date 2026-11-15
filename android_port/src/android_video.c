@@ -42,7 +42,10 @@
 unsigned char CtrBattleIntro_Sliding(void);
 unsigned char CtrBattleBg_MoveBgShown(void);
 
+/* The top picture's width is chosen at launch (AndroidVideo_ChooseWidth);
+ * buffers are sized for the widest, rows TOP_W apart. */
 #define TOP_W CTR_GAME_WIDTH
+#define TOP_W_MAX CTR_GAME_WIDTH_MAX
 #define TOP_H CTR_GAME_HEIGHT
 #define GBA_W 240
 #define GBA_H 160
@@ -66,17 +69,17 @@ static uint16_t sLineRegs[GBA_H][CTR_LINE_REGS];
 static unsigned sLineRegCount;
 
 /* ── Output images ────────────────────────────────────────────────────── */
-static uint32_t sTop[TOP_W * TOP_H];
+static uint32_t sTop[TOP_W_MAX * TOP_H];
 /* The bottom canvas in the 3DS framebuffer's layout: column-major, each
  * column bottom-to-top (3ds_bottom.h). Uploaded as a 240x320 texture. */
 static uint16_t sBottom[CTR_BOTTOM_WIDTH * CTR_BOTTOM_HEIGHT];
 /* Where RenderPicture writes: sTop, or the 2D field under the swoop's
  * crossfade (sField2D). */
-static uint32_t sField2D[TOP_W * TOP_H];
+static uint32_t sField2D[TOP_W_MAX * TOP_H];
 static uint32_t *sOut = sTop;
 /* A game screen in the bottom screen's window (CtrVideo_BottomInUse, below). */
 static bool sBottomInUse, sBottomNative, sNativeMenus;
-static uint32_t sBottomPicture[TOP_W * GBA_H];
+static uint32_t sBottomPicture[TOP_W_MAX * GBA_H];
 /*
  * The voxel world's overlay (3ds_video.c ComposeVoxelOverlay): only what the
  * game lays over the world - its text layer (BG0) and the sprites placed on
@@ -1266,7 +1269,7 @@ static void RenderTop(void)
 
     if (gba)
     {
-        for (size_t i = 0; i < TOP_W * TOP_H; i++)
+        for (size_t i = 0; i < (size_t)TOP_W * TOP_H; i++)
             sTop[i] = 0xFF000000u;
         RenderPicture(GBA_W, GBA_H, CTR_STAGE_X, CTR_STAGE_Y);
     }
@@ -1717,11 +1720,66 @@ static void Cover(int w, int h, int pw, int ph, int *x, int *y, int *vw, int *vh
     *y = (h - *vh) / 2;
 }
 
-/* Both pictures are made in the displays' own shapes (432x240 on the 16:9
- * top, 320x280 on the bottom): they cover them, a few pixels cut at most. */
+/* The bottom picture is made in its display's own shape (320x280 on the
+ * Thor): it covers it, a few pixels cut at most. */
 void AndroidVideo_BottomViewport(int w, int h, int *x, int *y, int *vw, int *vh)
 {
     Cover(w, h, CTR_BOTTOM_WIDTH, CTR_BOTTOM_HEIGHT, x, y, vw, vh);
+}
+
+/*
+ * The top picture's width (gba/defines.h DISPLAY_WIDTH), chosen once before
+ * the game starts from the shape of the window it will be shown in: 240
+ * lines and the columns that shape asks for, rounded up to a whole tile and
+ * kept within CTR_GAME_WIDTH_MIN/MAX. The Thor's 1920x1080 gets 432.
+ */
+unsigned short gDisplayWidth = 432;
+
+void AndroidVideo_ChooseWidth(int w, int h)
+{
+    int width = 432;
+
+    if (w > 0 && h > 0)
+    {
+        if (w < h)
+        {
+            int t = w;
+            w = h;
+            h = t;
+        }
+        width = (int)(((long)TOP_H * w + (long)h * 8 - 1) / ((long)h * 8)) * 8;
+    }
+    if (width < CTR_GAME_WIDTH_MIN) width = CTR_GAME_WIDTH_MIN;
+    if (width > CTR_GAME_WIDTH_MAX) width = CTR_GAME_WIDTH_MAX;
+    gDisplayWidth = (unsigned short)width;
+    CtrLog_Write(CTR_LOG_VIDEO, "top picture %dx%d for a %dx%d window", width, TOP_H, w, h);
+}
+
+/*
+ * Where the top picture goes in a w x h view: covering it when that cuts no
+ * more than a tile of the picture's rows or columns (the Thor's 432x240 is a
+ * few columns wider than 16:9), otherwise whole, centred, with black bars -
+ * the width stops at CTR_GAME_WIDTH_MAX, and nothing of the game's text
+ * boxes and menus may be cut.
+ */
+static void PlaceTop(int w, int h, int *x, int *y, int *vw, int *vh)
+{
+    Cover(w, h, TOP_W, TOP_H, x, y, vw, vh);
+    if ((long)(*vw - w) * TOP_W > 8L * *vw || (long)(*vh - h) * TOP_H > 8L * *vh)
+    {
+        if ((long)w * TOP_H >= (long)h * TOP_W)
+        {
+            *vh = h;
+            *vw = (int)((long)h * TOP_W / TOP_H);
+        }
+        else
+        {
+            *vw = w;
+            *vh = (int)((long)w * TOP_H / TOP_W);
+        }
+        *x = (w - *vw) / 2;
+        *y = (h - *vh) / 2;
+    }
 }
 
 #ifndef CTR_SHOW_FPS
@@ -1836,7 +1894,10 @@ static void DrawScreen(int screen, GLuint tex, int pw, int ph, int rotate)
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT);
-    Cover(w, h, pw, ph, &x, &y, &vw, &vh);
+    if (screen == HOST_SCREEN_TOP)
+        PlaceTop(w, h, &x, &y, &vw, &vh);
+    else
+        Cover(w, h, pw, ph, &x, &y, &vw, &vh);
     glUseProgram(sProgram);
     glBindVertexArray(sVao);
     glActiveTexture(GL_TEXTURE0);
@@ -1869,7 +1930,7 @@ static void DrawScreen(int screen, GLuint tex, int pw, int ph, int rotate)
 /* The composited top screen, sampled down for capture_top.rgba: its own
  * buffer. It was written into sTop, which holds what the next frames lay over
  * the world and is not wholly redrawn: a capture stayed on the screen. */
-static uint32_t sCaptureTop[TOP_W * TOP_H];
+static uint32_t sCaptureTop[TOP_W_MAX * TOP_H];
 static bool sCaptureComposited;
 
 static void Capture(void)
@@ -2081,11 +2142,18 @@ static float sRenderScale;
 
 static void HiResSurfaces(void)
 {
-    EGLint h = 0;
+    EGLint w = 0, h = 0;
     float scale = 4.5f;
 
-    if (sSurf[0] != EGL_NO_SURFACE && eglQuerySurface(sDpy, sSurf[0], EGL_HEIGHT, &h) && h > 0)
-        scale = (float)h / TOP_H;
+    /* As many picture pixels as the picture covers on the display. */
+    if (sSurf[0] != EGL_NO_SURFACE && eglQuerySurface(sDpy, sSurf[0], EGL_WIDTH, &w)
+        && eglQuerySurface(sDpy, sSurf[0], EGL_HEIGHT, &h) && w > 0 && h > 0)
+    {
+        int x, y, vw, vh;
+
+        PlaceTop(w, h, &x, &y, &vw, &vh);
+        scale = (float)vh / TOP_H;
+    }
     if (scale < 1.0f) scale = 1.0f;
     if (scale > 8.0f) scale = 8.0f;
     if (scale == sRenderScale && sLogical)
@@ -3733,7 +3801,7 @@ void CtrVideo_Present(void)
             }
         }
         else if (blank)
-            for (size_t i = 0; i < TOP_W * TOP_H; i++)
+            for (size_t i = 0; i < (size_t)TOP_W * TOP_H; i++)
                 sTop[i] = 0xFF000000u;
         else if ((HudFrame(), BattleLaidOut()) && BattleWorldFrame())
         {
@@ -3769,7 +3837,7 @@ void CtrVideo_Present(void)
     if (AndroidLog_FatalReason())
     {
         voxel = battleWorld = battle2d = stage = false;
-        for (size_t i = 0; i < TOP_W * TOP_H; i++)
+        for (size_t i = 0; i < (size_t)TOP_W * TOP_H; i++)
             sTop[i] = 0xFF2020A0u;
     }
     if (sSurf[0] != EGL_NO_SURFACE || sSurf[1] != EGL_NO_SURFACE)

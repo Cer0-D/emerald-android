@@ -31,7 +31,9 @@ public class MainActivity extends Activity {
 
     static native boolean nativeLoadGame(String code);
 
-    static native void nativeInit(String filesDir, String romfsDir);
+    // topW x topH: the window the top screen is shown in, whose shape picks
+    // the game's width (AndroidVideo_ChooseWidth).
+    static native void nativeInit(String filesDir, String romfsDir, int topW, int topH);
     static native void nativeSurface(int screen, Object surface); // surface null = gone
     static native void nativeKey(int keyCode, boolean down);
     static native void nativeAxis(float x, float y);
@@ -42,6 +44,28 @@ public class MainActivity extends Activity {
     public static final int SCREEN_TOP = 0, SCREEN_BOTTOM = 1;
 
     private BottomPresentation mBottom;
+    private TouchControls mControls;
+
+    /* A gamepad or joystick (the Thor's own buttons are one), not a keyboard. */
+    static boolean controllerConnected() {
+        for (int id : InputDevice.getDeviceIds()) {
+            InputDevice d = InputDevice.getDevice(id);
+            if (d == null || d.isVirtual()) continue;
+            int s = d.getSources();
+            if ((s & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD
+                    || (s & InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK)
+                return true;
+        }
+        return false;
+    }
+
+    private void updateControls() {
+        if (mControls == null) return;
+        boolean show = !controllerConnected();
+        if (!show) mControls.releaseAll();
+        mControls.setVisibility(show ? View.VISIBLE : View.GONE);
+        Log.i(TAG, "on-screen controls " + (show ? "shown" : "hidden"));
+    }
     /* The game runs (nativeInit): until then the first-boot setup has the
      * screen (Setup), and nothing native is touched but the library. */
     private boolean mStarted;
@@ -98,6 +122,14 @@ public class MainActivity extends Activity {
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
+        // The whole display, a camera hole's edge too: the top picture is
+        // centred on the screen, not on what is left beside the hole (the
+        // Flip7's 109px strip), and a hole falls in its bars when it has any.
+        android.view.WindowManager.LayoutParams lp = getWindow().getAttributes();
+        lp.layoutInDisplayCutoutMode =
+                android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+        getWindow().setAttributes(lp);
+        getWindow().setDecorFitsSystemWindows(false);
         hideBars(getWindow().getDecorView());
         getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         // Local wireless play's radio (Bluetooth LE) asks through this activity.
@@ -154,11 +186,31 @@ public class MainActivity extends Activity {
         mStarted = true;
         mSetup = null;
         Log.i(TAG, "playing " + code);
-        nativeInit(Languages.root(this, code).getAbsolutePath(), Setup.ENGINE_DIR);
+        android.graphics.Rect bounds = getWindowManager().getCurrentWindowMetrics().getBounds();
+        int topW = bounds.width(), topH = bounds.height();
+        Log.i(TAG, "top window " + topW + "x" + topH);
+        // Development: `--ei width N` plays as if the window asked for N
+        // columns (a multiple of 8), e.g. the Thor's 432 on another device.
+        int forced = Languages.isDev(this) ? getIntent().getIntExtra("width", 0) : 0;
+        if (forced > 0) { topW = forced * 4; topH = 960; }
+        nativeInit(Languages.root(this, code).getAbsolutePath(), Setup.ENGINE_DIR, topW, topH);
         handleIntent(getIntent());
         SurfaceView top = new SurfaceView(this);
         top.getHolder().addCallback(new ScreenCallback(SCREEN_TOP));
-        setContentView(top);
+        android.widget.FrameLayout frame = new android.widget.FrameLayout(this);
+        frame.addView(top);
+        mControls = new TouchControls(this);
+        frame.addView(mControls);
+        setContentView(frame);
+        // On-screen buttons while no controller is connected.
+        android.hardware.input.InputManager im =
+                (android.hardware.input.InputManager) getSystemService(INPUT_SERVICE);
+        im.registerInputDeviceListener(new android.hardware.input.InputManager.InputDeviceListener() {
+            @Override public void onInputDeviceAdded(int id) { updateControls(); }
+            @Override public void onInputDeviceRemoved(int id) { updateControls(); }
+            @Override public void onInputDeviceChanged(int id) { updateControls(); }
+        }, null);
+        updateControls();
         hideBars(getWindow().getDecorView());
         if (mResumed) {
             showBottom();
@@ -215,6 +267,7 @@ public class MainActivity extends Activity {
 
     @Override protected void onPause() {
         mResumed = false;
+        if (mControls != null) mControls.releaseAll();
         if (mStarted) nativePause(true);
         super.onPause();
     }
