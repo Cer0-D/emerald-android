@@ -151,7 +151,11 @@ VOXEL_READY="$OUT/stamps/en.voxel"
 VOXEL_TOKEN="$(date +%s%N)-$$"
 echo "build: $MODE, languages ${CODES[*]}, $PARALLEL at once (${MEM_FREE} MiB free, make -j$LANG_JOBS each)"
 mkdir -p "$OUT/stamps" "$OUT/logs"
-rm -rf "$OUT/assets.new"
+# A language's stamp says what its files in assets/ were made from: written
+# beside assets.new/ and kept only when that becomes assets/ (a build that
+# fails elsewhere throws its files away, and must not leave them "made").
+rm -rf "$OUT/assets.new" "$OUT/stamps.new"
+mkdir -p "$OUT/stamps.new"
 
 # This checkout's 3ds_port/, builder/ and tools/ into a tree (bootstrap.py's
 # last step): every build builds what is checked out, not a stale copy.
@@ -238,6 +242,7 @@ build_language() {
         step "$code: engine files, recipe and voxel programs unchanged"
         mkdir -p "$(dirname "$dest")"
         cp -r "$OUT/assets/lang/$code" "$dest"
+        cp "$OUT/stamps/$code" "$OUT/stamps.new/$code"
         return
     fi
 
@@ -268,7 +273,7 @@ build_language() {
     "$PY" "$HERE/tools/export_recipe.py" "$work/emerald3ds.recipe" "$dest/builder"
     # What Languages.java knows of this language's cartridge.
     printf '%s\n%s\n%s\n' "$code" "${LABEL[$code]}" "${SHA1[$code]}" > "$dest/builder/rom.txt"
-    stamp_of "$code" "$tree" > "$OUT/stamps/$code"
+    stamp_of "$code" "$tree" > "$OUT/stamps.new/$code"
 }
 
 # Each language's job, its output into its log, its steps on the console.
@@ -325,6 +330,10 @@ done
 [[ ${#FAILED[@]} -eq 0 ]] || { echo "build: failed: ${FAILED[*]}" >&2; exit 1; }
 rm -rf "$OUT/assets"
 mv "$OUT/assets.new" "$OUT/assets"
+for code in "${CODES[@]}"; do
+    mv "$OUT/stamps.new/$code" "$OUT/stamps/$code"
+done
+rm -rf "$OUT/stamps.new"
 
 step "APK"
 LIBS=()
