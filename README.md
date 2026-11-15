@@ -17,6 +17,29 @@ game on the top screen, and a touch interface on the bottom screen in place of
 the START menu. The optional **voxel overworld** lets you explore Hoenn from a
 new angle, rendered at the device's full resolution.
 
+## What's new in 0.5.0.3
+
+- **The top screen fits the display.** Its width follows the display's
+  shape, up to a little wider than 16:9; on wider displays black bars fill
+  the sides. Nothing of the text boxes or menus is cut off, and the picture
+  stays clear of a camera hole. The Ayn Thor's screen is filled as before.
+- **On-screen controls** (d-pad, A, B, L, R, START, SELECT) appear when no
+  controller is connected, and hide when one is.
+- **Single-screen devices (experimental).** The game is now playable on
+  ordinary phones and single-screen handhelds, with controls and the menus
+  in reach:
+  - **START** opens the bottom screen's interface as a window over the game,
+    to be used by touch or with the buttons; START or B closes it;
+  - the **PC** and **battles** play on the one screen as on the original
+    game, with their own menus.
+
+  Single-screen support is new and has only been tested on one phone (a
+  Galaxy Z Flip7): expect rough edges there. Dual-screen devices play as
+  before.
+
+Updating from 0.5.0.2 keeps your save. The app asks for the ROM once more,
+as this version builds its game data anew.
+
 ## What's new in 0.5.0.2
 
 - **Follower Pokémon.** Your lead Pokémon walks behind you, with its
@@ -84,10 +107,13 @@ and rebuilds it. Your save is kept.
   (optional: without it the game plays without a follower).
 - **Target device: the [Ayn Thor](https://www.ayntec.com/).** The port is
   developed, laid out and tested on it.
-- **Only dual-screen devices are supported for now**: the bottom screen's
-  interface needs a second display. Other dual-screen devices may work but are
-  untested. A **single-screen mode** for ordinary phones and handhelds is
-  planned.
+- **Dual-screen devices** play with the bottom screen's interface on the
+  second display. Other dual-screen devices than the Thor may work but are
+  untested.
+- **Single-screen devices** (phones, single-screen handhelds) are supported
+  **experimentally**: on-screen controls, the bottom screen's interface as a
+  window opened with START, the PC and battles as on the original game
+  (see [What's new in 0.5.0.3](#whats-new-in-0503)).
 
 ### Supported cartridges
 
@@ -191,7 +217,7 @@ What works and what does not yet, compared with Emerald 3DS:
 | Visible wild Pokémon | Working |
 | The PC and other full-screen bottom menus | Working, scaled to the bottom screen |
 | Local wireless play (Bluetooth) | Working: link rooms. Trades, battles and minigames not fully tested |
-| Single-screen devices | Not supported yet (planned) |
+| Single-screen devices | Experimental: on-screen controls, the bottom screen as a window (START), the PC and battles as on the GBA. Tested on a Galaxy Z Flip7 only |
 | Stereoscopic 3D | Not applicable (New 3DS only) |
 
 Report problems in this repository's issues, with your device, the app
