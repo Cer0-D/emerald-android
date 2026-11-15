@@ -520,10 +520,10 @@ romfs/voxel/buildings.bin: scripts/gen_voxel_buildings.py scripts/voxel_building
 		scripts/voxel_building_specs.py scripts/voxel_bridge.py scripts/voxel_fence.py scripts/voxel_fortree.py scripts/dump_region_art.py scripts/voxel_props.py \
 		scripts/voxel_relief_fixes.py assets/voxel/relief_fixes.json \
 		scripts/gen_voxel_relief.py \
-		scripts/voxel_defect_scan.py assets/voxel/interior_lint_allow.toml \
+		scripts/voxel_defect_scan.py assets/voxel/interior_lint_allow.toml scripts/voxel_inherit.py \
 		$(ROOT)/data/layouts/layouts.json
-	@mkdir -p $(@D)
-	"$(PYTHON)" scripts/gen_voxel_buildings.py --verify --output $@
+	@mkdir -p $(@D) build
+	VOXEL_ROOMS=build/buildings.rooms "$(PYTHON)" scripts/gen_voxel_buildings.py --verify --output $@
 
 .PHONY: verify-voxel-buildings
 verify-voxel-buildings:
@@ -533,13 +533,20 @@ verify-voxel-buildings:
 # It leaves a building's cells to its model and reads which cells those are
 # from buildings.bin (voxel_terraces.modelled), so it comes after it: made
 # beside it, the relief depended on which of the two finished first.
+# Another language's is English's when everything it would read is
+# (scripts/inherit_relief.py: only translated tiles on buildings and
+# signposts differ, which the relief leaves to them): copied from English's
+# tree (VOXEL_INHERIT_FROM, android_port/tools/build.sh). Made otherwise,
+# recording what it reads of the tilesets (build/relief.reads) for the
+# languages that inherit it.
 romfs/voxel/relief.bin: scripts/gen_voxel_relief.py scripts/voxel_cells.py scripts/voxel_props.py \
 		scripts/voxel_art.py scripts/voxel_building.py scripts/dump_region_art.py \
 		scripts/voxel_relief_fixes.py scripts/voxel_terraces.py assets/voxel/relief_fixes.json \
-		scripts/voxel_engine_view.py romfs/voxel/buildings.bin \
+		scripts/voxel_engine_view.py scripts/inherit_relief.py scripts/voxel_inherit.py romfs/voxel/buildings.bin \
 		$(ROOT)/data/layouts/layouts.json
-	@mkdir -p $(@D)
-	"$(PYTHON)" scripts/gen_voxel_relief.py --output $@
+	@mkdir -p $(@D) build
+	"$(PYTHON)" scripts/inherit_relief.py --output $@ \
+		|| VOXEL_RELIEF_READS=build/relief.reads "$(PYTHON)" scripts/gen_voxel_relief.py --output $@
 
 romfs/bottom/battle.bin: scripts/gen_battle_art.py
 	@mkdir -p $(@D)

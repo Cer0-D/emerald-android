@@ -138,6 +138,17 @@ PARALLEL="${PARALLEL:-${#CODES[@]}}"
 (( PARALLEL <= ${#CODES[@]} )) || PARALLEL=${#CODES[@]}
 LANG_JOBS=$(( JOBS / PARALLEL ))
 (( LANG_JOBS >= 2 )) || LANG_JOBS=2
+# The voxel generators' own worker processes (the buildings' proofs, the
+# relief's groups and mountain solves): each language its share of the cores,
+# as make's -j, so that the languages together start no more workers than
+# there are cores.
+export VOXEL_JOBS="${VOXEL_JOBS:-$LANG_JOBS}"
+# The other languages' relief is English's when everything it reads is
+# (3ds_port/scripts/inherit_relief.py): with English in this run, theirs waits
+# for English's tree, which says so in VOXEL_READY - this run's token once it
+# is built, "failed" and the token if it is not - and is copied from it.
+VOXEL_READY="$OUT/stamps/en.voxel"
+VOXEL_TOKEN="$(date +%s%N)-$$"
 echo "build: $MODE, languages ${CODES[*]}, $PARALLEL at once (${MEM_FREE} MiB free, make -j$LANG_JOBS each)"
 mkdir -p "$OUT/stamps" "$OUT/logs"
 rm -rf "$OUT/assets.new"
@@ -212,6 +223,13 @@ build_language() {
 
     step "$code: library and staging"
     make -C "$tree" -f "$HERE/android.mk" -j"$LANG_JOBS" lib romfs-data build/libemerald-stripped.so build/libemeraldboot.so
+    # English's voxel world is built: the other languages may take theirs from
+    # it (its rooms are said ready by its buildings' generator, or here when
+    # they were up to date and it did not run)
+    if [[ "$code" == en ]]; then
+        echo "$VOXEL_TOKEN" > "$VOXEL_READY"
+        echo "$VOXEL_TOKEN" > "$tree/build/buildings.ready"
+    fi
     [[ "$code" == en ]] || make -C "$tree" -f "$HERE/android.mk" build/gamedata_image.map
 
     local stamp
@@ -263,6 +281,16 @@ run_language() {
         CONSOLE=1
         STEP=""
         exec >"$OUT/logs/$code.log" 2>&1
+        if [[ "$code" == en ]]; then
+            # a failure says so to the languages waiting for English's tree
+            trap 'rc=$?; [[ $rc == 0 ]] || { echo "failed $VOXEL_TOKEN" > "$VOXEL_READY";
+                  echo "failed $VOXEL_TOKEN" > "$REPO/build/upstream/3ds_port/build/buildings.ready"; }' EXIT
+            export VOXEL_BUILT_TOKEN="$VOXEL_TOKEN"
+        elif [[ " ${CODES[*]} " == *" en "* ]]; then
+            export VOXEL_INHERIT_FROM="$REPO/build/upstream/3ds_port"
+            export VOXEL_INHERIT_READY="$VOXEL_READY" VOXEL_INHERIT_TOKEN="$VOXEL_TOKEN"
+            export VOXEL_INHERIT_WAIT="${VOXEL_INHERIT_WAIT:-3600}"
+        fi
         build_language "$code"
         step ""
     ) &

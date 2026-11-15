@@ -23,6 +23,7 @@ import collections
 import copy
 from PIL import Image, ImageChops, ImageFilter
 import json
+import pickle
 import math
 import os
 import struct
@@ -32,6 +33,7 @@ import types
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import voxel_building as vb  # noqa: E402
 import voxel_building_specs as specs  # noqa: E402
+import voxel_inherit  # noqa: E402
 import voxel_cells as vc  # noqa: E402
 import voxel_bridge  # noqa: E402
 import voxel_fence  # noqa: E402
@@ -884,18 +886,45 @@ def place_reused(layout, ground, pit=()):
             own = p["spec"]["ground"][0]
             on = None if ground is None or own not in painted else own
             p["spec"].setdefault("reused_at", []).append((layout.id, x, y, on))
+            _REUSE_JOURNAL.append(("reused_at", _piece_key(p), (layout.id, x, y, on)))
         else:
             # found by its own pixels on another floor: it stands there bare,
             # without the marks of its own room's floor, and the room's own
             # paint round it is laid over the placement's floor, cell by cell
             p["spec"].setdefault("bare_at", []).append((layout.id, x, y))
             p["spec"]["own"] = p["pixels"]
+            _REUSE_JOURNAL.append(("bare_at", _piece_key(p), (layout.id, x, y)))
         pixels |= pts
         w, h = p["size"]
         cells |= {(x + i, y + j) for j in range(h) for i in range(w)}
         print("  reuse: %s stands in %s at %d,%d" % (p["spec"]["name"], layout.id, x, y))
     _REUSED_PIXELS[layout.id] = _REUSED_PIXELS.get(layout.id, set()) | pixels
+    _REUSE_JOURNAL.append(("pixels", layout.id, pixels))
     return pixels, cells
+
+
+def _piece_key(p):
+    return (p["layout"], p["spec"]["name"])
+
+
+# what place_reused wrote that is not the room's own: its marks on the pieces
+# of the rooms before it, and _REUSED_PIXELS - a room taken from English's
+# (Rooms) does it again on this tree's pieces
+_REUSE_JOURNAL = []
+
+
+def _replay_reuse(ops, own_keys):
+    """place_reused's writes `ops`, on this tree's _PIECES; those on the
+    room's own pieces (own_keys) are in its record already."""
+    by_key = {_piece_key(p): p for p in _PIECES}
+    for op, key, value in ops:
+        if op == "pixels":
+            _REUSED_PIXELS[key] = _REUSED_PIXELS.get(key, set()) | value
+        elif key not in own_keys:
+            p = by_key[key]
+            p["spec"].setdefault(op, []).append(value)
+            if op == "bare_at":
+                p["spec"]["own"] = p["pixels"]
 
 
 # layout -> the room's pixels the pieces found again in it draw: none of them
@@ -1945,6 +1974,18 @@ def anim_box(layout, shape, tiles, frames):
 LIVE_BG = (1, 2, 3)
 
 
+class _Parts:
+    """A room's piece's parts, read off its drawing once: the spec's "parts"
+    hands them over as they are (a callable, as every spec's). Not a
+    closure, so that a room's pieces can be recorded (Rooms)."""
+
+    def __init__(self, parts):
+        self.parts = parts
+
+    def __call__(self):
+        return self.parts
+
+
 def interior_specs(spec):
     """Expand an `interior` spec: a room cut into pieces, one model each.
 
@@ -2699,7 +2740,7 @@ def interior_specs(spec):
         out.append({"name": "%s_%s" % (spec["name"], pc["name"]), "layout": room["layout"],
                     "rect": (x0, y0, w, h), "ground": room["ground"], "art": art,
                     **({"owned": owned} if owned is not None else {}), **extra,
-                    "parts": (lambda ps: (lambda: ps))(parts),
+                    "parts": _Parts(parts),
                     "exact": [] if pc.get("flat") else [(0, 0, w * 16, h * 16)],
                     "interior": spec["name"],
                     "behind_wall": behind_wall,
@@ -2897,10 +2938,127 @@ def anim_table(anims, offset):
     return table + struct.pack("<I", offset) + b"ANIM"
 
 
+class Rooms:
+    """The rooms' pieces (interior_specs), what each registered for the rooms
+    that repeat its pieces (_PIECES) and what it printed: recorded in
+    English's tree (VOXEL_ROOMS, build/buildings.rooms), taken from it in
+    another language's.
+
+    Most of the generator's time goes on the rooms, one after another (each
+    stands the furniture the rooms before it modelled). Another language's
+    rooms are English's but where its own drawing differs: the Department
+    Store's floors and the Battle Dome's room, drawn with translated tiles.
+    A room drawn as in English is read as in English, whatever the rooms
+    before it registered: a piece of theirs stands in it where the room
+    draws that piece's own pixels - which, where they are translated, it
+    does not. So another language takes English's every room but those
+    (voxel_inherit.same_inputs first: everything else it reads is English's),
+    and expands those here, in their place."""
+
+    def __init__(self, path):
+        self.path = path
+        self.record = {} if path and not voxel_inherit.english_tree() else None
+        if self.record is not None and os.path.exists(path):
+            # none while this run makes them: a run that stops leaves no
+            # record of other rooms than its buildings.bin's
+            os.remove(path)
+        self.english = None
+        self.asked = False
+        self.taken = self.made = 0
+
+    def inherit(self):
+        """English's recorded rooms, when this is another language's tree and
+        they may be taken; a line says why not otherwise."""
+        english = voxel_inherit.english_tree()
+        if english is None:
+            return
+        token = os.environ.get("VOXEL_INHERIT_TOKEN")
+        ready = os.path.join(english, "build", "buildings.ready")
+        if token and not voxel_inherit.wait_for(ready, token, "voxel buildings"):
+            print("voxel buildings: the English tree was not built (or not in time): every room made here")
+            return
+        reason = voxel_inherit.same_inputs(english, PORT)
+        recorded = os.path.join(english, "build", "buildings.rooms")
+        if reason is None and not os.path.exists(recorded):
+            reason = "English recorded no rooms"
+        if reason:
+            print("voxel buildings: %s: every room made here" % reason)
+            return
+        with open(recorded, "rb") as f:
+            self.english = pickle.load(f)
+        self.drawing = (voxel_inherit.Drawing(os.path.dirname(english)),
+                        voxel_inherit.Drawing(os.path.dirname(PORT)))
+        self._alike = {}
+
+    def _drawn_alike(self, room):
+        """Whether the room's own drawing - its layout's metatiles and those
+        its other states lay - is English's."""
+        lid = room["layout"]
+        layout = vb.LayoutArt(lid)
+        metatiles = {b & 0x3FF for b in layout.blocks} | set((room.get("draw") or {}).values())
+        for m in metatiles:
+            key = (layout.primary, layout.secondary, m)
+            if key not in self._alike:
+                self._alike[key] = voxel_inherit.drawn_alike(*self.drawing, layout.primary,
+                                                             layout.secondary, m)
+            if not self._alike[key]:
+                return False
+        return True
+
+    def expand(self, spec):
+        """interior_specs(spec), or English's when it may be taken."""
+        import contextlib
+        import io
+        name = spec["name"]
+        if not self.asked:
+            # here, at the first room: the models before it are made while
+            # English's rooms are
+            self.asked = True
+            self.inherit()
+        if self.english is not None and name in self.english and self._drawn_alike(spec["interior"]):
+            pieces, registered, printed, ops = pickle.loads(self.english[name])
+            _PIECES.extend(registered)
+            _replay_reuse(ops, {_piece_key(p) for p in registered})
+            registered = []
+            self.taken += 1
+        else:
+            if self.english is not None:
+                print("voxel buildings: room %s drawn otherwise: made here" % name)
+            before, journal = len(_PIECES), len(_REUSE_JOURNAL)
+            text = io.StringIO()
+            with contextlib.redirect_stdout(text):
+                pieces = interior_specs(spec)
+            registered, printed = _PIECES[before:], text.getvalue()
+            ops = _REUSE_JOURNAL[journal:]
+            # as it stands now, before the models change their specs
+            if self.record is not None:
+                self.record[name] = pickle.dumps((pieces, registered, printed, ops), protocol=5)
+            self.made += 1
+            registered = []     # already in _PIECES
+        sys.stdout.write(printed)
+        _PIECES.extend(registered)
+        return pieces
+
+    def save(self):
+        if self.record is None:
+            return
+        os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+        with open(self.path + ".tmp", "wb") as f:
+            pickle.dump(self.record, f, protocol=5)
+        os.replace(self.path + ".tmp", self.path)
+        # English's rooms are recorded: the other languages of this run may
+        # take them now, while the models are checked and exported here (a
+        # check that fails here fails the run, theirs with it)
+        if os.environ.get("VOXEL_BUILT_TOKEN"):
+            with open(os.path.join(PORT, "build", "buildings.ready"), "w") as f:
+                f.write(os.environ["VOXEL_BUILT_TOKEN"] + "\n")
+
+
 def build_models(only=None):
     models = []
     layouts = {}
     expanded = []
+    rooms = Rooms(None if only else os.environ.get("VOXEL_ROOMS"))
     for spec in specs.SPECS:
         if "components" in spec:
             expanded += component_specs(spec, layouts)
@@ -2909,11 +3067,15 @@ def build_models(only=None):
         elif "props" in spec:
             expanded += prop_specs(spec)
         elif "interior" in spec:
-            expanded += interior_specs(spec)
+            expanded += rooms.expand(spec)
         elif "bridge" in spec:
             expanded += voxel_bridge.block_specs(spec)
         else:
             expanded.append(spec)
+    rooms.save()
+    if rooms.english is not None:
+        print("voxel buildings: %d room(s) English's, %d made here" % (rooms.taken, rooms.made))
+    rooms.english = rooms.record = None     # every room is in `expanded` now
     reuse_everywhere()
     for spec in expanded:
         if only and not spec["name"].startswith(only):
@@ -3456,6 +3618,23 @@ def report_grounds(models, found):
 
 
 def find_placements(model, layouts_json):
+    """Every place in Hoenn the building stands (_find_placements), worked
+    out once per model: every room's check asks it of every model, which
+    made the checks most of the generator's time (193 rooms x 3049 models,
+    9 of 13 minutes). Asked again for the same model, the answer is the one
+    it gave - unless what it reads off the model changed since: its drawing
+    (export compacts some into new images), or the cells it owns. A copy
+    each time, so that no caller changes the remembered one."""
+    owned = frozenset(model.owned)
+    bare = frozenset(getattr(model, "bare", ()))
+    memo = getattr(model, "_placements", None)
+    if memo is None or memo[0] is not model.art or memo[1] != owned or memo[2] != bare:
+        memo = (model.art, owned, bare, _find_placements(model, layouts_json))
+        model._placements = memo
+    return [(index, px, py, ground, name, list(odd)) for (index, px, py, ground, name, odd) in memo[3]]
+
+
+def _find_placements(model, layouts_json):
     """Every place in Hoenn the building stands, with the ground around it.
 
     A spec may name `match_rows` (first, end): only those rows of the
@@ -4764,45 +4943,56 @@ def room_check(models, layout_id, out_dir, draw=None, suffix=""):
     return bad
 
 
-def verify(models, out, complete=True):
-    """The proofs: each model against its drawing, each room as composed, and
-    each room's pieces by the interior lint. Writes the diagnostic images to
-    `out`; True when all of them pass. `complete` when the models are the
-    whole game's (not --only): only then is an allowance for a piece that was
-    not built a stale one."""
+# verify's workers: forked with the models (and the output directory) set
+# here, so that each has them without being sent a copy.
+_PROOF = {}
+
+
+def _model_proof(k):
+    """One model against its drawing (a worker's part of verify): the line
+    verify prints for it, and whether it fails."""
+    model, out = _PROOF["models"][k], _PROOF["out"]
+    judged = model
+    if getattr(model, "own", None) is not None:
+        # a bare piece: its own pixels, without its room's floor marks
+        art = model.art.copy()
+        apx = art.load()
+        for v in range(model.cells[1] * 16):
+            for u in range(model.cells[0] * 16):
+                if (u, v) not in model.own:
+                    apx[u, v] = (0, 0, 0, 0)
+        judged = types.SimpleNamespace(art=art, mesh=model.mesh, name=model.name)
+    reference = model.spec.get("drawing")
+    if callable(reference):
+        reference = reference(model)
+    if reference is not None and getattr(model, "own", None) is not None:
+        reference = _without(reference, {(u, v) for v in range(model.cells[1] * 16)
+                                         for u in range(model.cells[0] * 16)
+                                         if (u, v) not in model.own})
+    wrong, missing, extra = vb.ortho_check(judged, os.path.join(out, model.name + "_ortho.png"),
+                                           exact=model.spec.get("exact"),
+                                           reference=reference)
+    bad = vb.density_check(model)
+    text = ["%-22s %4d tris  exact: wrong=%d missing=%d extra=%d  texel density: %d bad"
+            % (model.name, model.triangle_count(), wrong, missing, extra, len(bad))]
+    for tag, along, down, shear in bad[:8]:
+        text.append("    %-28s along=%.3f down=%.3f shear=%.3f" % (tag, along, down, shear))
+    # a model whose outline is a polygon (BakedLathe) declares how many
+    # pixels of it may differ; any more is a failure
+    failed = wrong + missing + extra > model.spec.get("tolerance", 0) or bool(bad)
+    return "\n".join(text) + "\n", failed
+
+
+def _room_proof(lid):
+    """One room as composed, in each of its states (a worker's part of
+    verify): what verify prints for it - room_check's lines with its own -
+    and whether it fails."""
+    import contextlib
+    import io
+    models, out = _PROOF["models"], _PROOF["out"]
+    text = io.StringIO()
     failed = False
-    for model in models:
-        judged = model
-        if getattr(model, "own", None) is not None:
-            # a bare piece: its own pixels, without its room's floor marks
-            art = model.art.copy()
-            apx = art.load()
-            for v in range(model.cells[1] * 16):
-                for u in range(model.cells[0] * 16):
-                    if (u, v) not in model.own:
-                        apx[u, v] = (0, 0, 0, 0)
-            judged = types.SimpleNamespace(art=art, mesh=model.mesh, name=model.name)
-        reference = model.spec.get("drawing")
-        if callable(reference):
-            reference = reference(model)
-        if reference is not None and getattr(model, "own", None) is not None:
-            reference = _without(reference, {(u, v) for v in range(model.cells[1] * 16)
-                                             for u in range(model.cells[0] * 16)
-                                             if (u, v) not in model.own})
-        wrong, missing, extra = vb.ortho_check(judged, os.path.join(out, model.name + "_ortho.png"),
-                                               exact=model.spec.get("exact"),
-                                               reference=reference)
-        bad = vb.density_check(model)
-        print("%-22s %4d tris  exact: wrong=%d missing=%d extra=%d  texel density: %d bad"
-              % (model.name, model.triangle_count(), wrong, missing, extra, len(bad)))
-        for tag, along, down, shear in bad[:8]:
-            print("    %-28s along=%.3f down=%.3f shear=%.3f" % (tag, along, down, shear))
-        # a model whose outline is a polygon (BakedLathe) declares how many
-        # pixels of it may differ; any more is a failure
-        if wrong + missing + extra > model.spec.get("tolerance", 0) or bad:
-            failed = True
-    rooms = sorted({m.spec["layout"] for m in models if "interior" in m.spec})
-    for lid in rooms:
+    with contextlib.redirect_stdout(text):
         bad = room_check(models, lid, out)
         print("room %-28s composed with the terrain: %d pixel(s) differ from the drawing"
               % (lid, bad))
@@ -4816,6 +5006,66 @@ def verify(models, out, complete=True):
             print("room %-28s in its state %d: %d pixel(s) differ from the drawing"
                   % (lid, n + 1, bad))
             failed = failed or bad != 0
+    return text.getvalue(), failed
+
+
+def _proofs(func, items, jobs):
+    """func over items, in `jobs` forked processes (1: here), the results in
+    the items' order."""
+    if jobs <= 1 or len(items) <= 1:
+        return map(func, items)
+    import multiprocessing
+    # what is printed so far out first: a worker forked with it still
+    # buffered would print it again
+    sys.stdout.flush()
+    sys.stderr.flush()
+    # the parent's objects as they are, out of the collector's reach: a
+    # worker that collected them would write to every page of them, and own a
+    # copy of the whole parent
+    import gc
+    gc.freeze()
+    pool = multiprocessing.get_context("fork").Pool(min(jobs, len(items)))
+    try:
+        return list(pool.imap(func, items, chunksize=4))
+    finally:
+        pool.close()
+        pool.join()
+        gc.unfreeze()
+
+
+def verify(models, out, complete=True, jobs=None):
+    """The proofs: each model against its drawing, each room as composed, and
+    each room's pieces by the interior lint. Writes the diagnostic images to
+    `out`; True when all of them pass. `complete` when the models are the
+    whole game's (not --only): only then is an allowance for a piece that was
+    not built a stale one.
+
+    The models' and the rooms' proofs are each their own: they run side by
+    side in `jobs` processes (VOXEL_JOBS, or every core; 1: one after
+    another), each printed in its turn as if they had not."""
+    if jobs is None:
+        jobs = int(os.environ.get("VOXEL_JOBS", "0")) or os.cpu_count() or 1
+    failed = False
+    _PROOF.update(models=models, out=out)
+    try:
+        for text, bad in _proofs(_model_proof, range(len(models)), jobs):
+            sys.stdout.write(text)
+            failed = failed or bad
+        rooms = sorted({m.spec["layout"] for m in models if "interior" in m.spec})
+        # Where every model stands, worked out here before the rooms' workers
+        # are forked (find_placements remembers it on the model): as the
+        # first room's check worked it out when the rooms were checked here
+        # one after another, so that each worker starts from the same models.
+        layouts_json = json.load(open(os.path.join(vb.ROOT, "data", "layouts", "layouts.json"),
+                                      encoding="utf-8"))["layouts"]
+        if rooms:
+            for m in models:
+                find_placements(m, layouts_json)
+        for text, bad in _proofs(_room_proof, rooms, jobs):
+            sys.stdout.write(text)
+            failed = failed or bad
+    finally:
+        _PROOF.clear()
     for lid in sorted(voxel_bridge.BRIDGES):
         mine = [m for m in models if m.spec.get("deck_of") == lid]
         if mine:

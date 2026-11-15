@@ -5033,13 +5033,14 @@ def records(sol):
     return out
 
 
-def merge(sol, relief):
+def merge(sol, relief, recs=None):
     """Put a solved group into a parsed relief.bin (voxel_relief_fixes.parse),
     in place of what the generator had there, each layout over its own base.
-    Ledges and berry soil keep their own cells and records."""
+    Ledges and berry soil keep their own cells and records. `recs`: the
+    group's records(sol), when worked out already (apply_file's workers)."""
     import voxel_relief_fixes as vrf
     c = sol["cells"]
-    recs = records(sol)
+    recs = records(sol) if recs is None else recs
     # a variant is a metatile cut so: the secondary tileset's ids are its own
     entries = vb._layouts_json()
 
@@ -5234,26 +5235,82 @@ def chosen_layouts():
     return list(GROUPS) + [l for l in marked if l not in GROUPS]
 
 
-def apply_file(path, layouts=None, quiet=False):
+# The relief.bin apply_file's workers solve against: set before they are
+# forked, so that each has it without being sent a copy.
+_APPLY_REFERENCE = None
+
+
+def _solve_group(layout_id):
+    """A worker's part of apply_file: one group solved, and its records."""
+    sol = solve(layout_id, _APPLY_REFERENCE)
+    return sol, records(sol)
+
+
+def apply_file(path, layouts=None, quiet=False, jobs=None):
     """Rebuild the chosen groups of a relief.bin written by gen_voxel_relief
     (its world placement kept: the bases and every map's ground stay where
-    the world solver put them)."""
+    the world solver put them).
+
+    Each group is solved against the file as gen_voxel_relief wrote it, not
+    as the groups before it left it, so the groups are solved side by side
+    in `jobs` processes (VOXEL_JOBS, or every core; 1: one after another)
+    and merged one after another in the order they were always merged in:
+    the variants they add are numbered in that order. The same file either
+    way."""
+    global _APPLY_REFERENCE
     import voxel_relief_fixes as vrf
     blob = open(path, "rb").read()
     relief = vrf.parse(blob)
     reference = vrf.parse(blob)
-    done = set()
+    # The groups, in order: each chosen layout's, unless an earlier group
+    # took it in (the group a layout is solved in is group_of's).
+    order, done = [], set()
     for lid in (chosen_layouts() if layouts is None else layouts):
         if lid in done:
             continue
-        sol = solve(lid, reference)
-        done.update(m[0] for m in sol["cells"].members)
-        merge(sol, relief)
-        if not quiet:
-            print("terraces %-40s %3d terraces, %d votes dropped" % (
-                "+".join(m[0][7:] for m in sol["cells"].members), len(set(sol["comp"].values())),
-                len(sol["dropped"])))
+        members = {m[0] for m in group_of(lid)}
+        order.append((lid, members))
+        done.update(members)
+    if jobs is None:
+        jobs = int(os.environ.get("VOXEL_JOBS", "0")) or os.cpu_count() or 1
+    jobs = max(1, min(jobs, len(order)))
+    if jobs == 1:
+        results = (_solve_group_with(lid, reference) for lid, _ in order)
+        pool = None
+    else:
+        import multiprocessing
+        _APPLY_REFERENCE = reference
+        # what is printed so far out first: a worker forked with it still
+        # buffered would print it again
+        sys.stdout.flush()
+        sys.stderr.flush()
+        # the parent's objects as they are, out of the collector's reach: a
+        # worker that collected them would write to every page of them, and own a
+        # copy of the whole parent
+        import gc
+        gc.freeze()
+        pool = multiprocessing.get_context("fork").Pool(jobs)
+        results = pool.imap(_solve_group, [lid for lid, _ in order])
+    try:
+        for (lid, members), (sol, recs) in zip(order, results):
+            if {m[0] for m in sol["cells"].members} != members:
+                raise SystemExit("voxel_terraces: %s solved as another group than group_of's" % lid)
+            merge(sol, relief, recs)
+            if not quiet:
+                print("terraces %-40s %3d terraces, %d votes dropped" % (
+                    "+".join(m[0][7:] for m in sol["cells"].members), len(set(sol["comp"].values())),
+                    len(sol["dropped"])))
+    finally:
+        if pool is not None:
+            pool.close()
+            pool.join()
+        _APPLY_REFERENCE = None
     open(path, "wb").write(vrf.pack(relief))
+
+
+def _solve_group_with(layout_id, reference):
+    sol = solve(layout_id, reference)
+    return sol, records(sol)
 
 
 # -- views --------------------------------------------------------------------

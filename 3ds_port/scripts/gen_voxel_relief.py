@@ -60,7 +60,86 @@ import shutil
 import struct
 import sys
 
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+
+def _record_reads(directory):
+    """With VOXEL_RELIEF_READS: what of the tilesets this run reads, in this
+    process and the workers it forks (each its own file in `directory`):
+    every tile it decodes and every metatile whose entries it reads, by both
+    readers of the decomp's tilesets (dump_region_art's and voxel_art's).
+    inherit_relief.py lets another language's tilesets differ from English's
+    where the relief reads none of it, and only there."""
+    import dump_region_art as dra
+    import voxel_art as va
+    import voxel_building as vb
+    os.makedirs(directory, exist_ok=True)
+    for name in os.listdir(directory):      # a run that stopped half way
+        os.remove(os.path.join(directory, name))
+    seen = set()
+
+    def note(kind, tileset, index):
+        key = (kind, tileset, index)
+        if key in seen:
+            return
+        seen.add(key)
+        with open(os.path.join(directory, "reads.%d" % os.getpid()), "a") as out:
+            out.write("%s %s %d\n" % key)
+
+    def named(cls):
+        init = cls.__init__
+
+        def __init__(self, primary, secondary, *args, **kwargs):
+            init(self, primary, secondary, *args, **kwargs)
+            self._read_names = (primary, secondary)
+        cls.__init__ = __init__
+
+    def tiles(cls):
+        subtile = cls.subtile
+
+        def recorded(self, tile_id, palette_id):
+            which = 0 if tile_id < 512 else 1
+            note("T", self._read_names[which], tile_id - which * 512)
+            return subtile(self, tile_id, palette_id)
+        cls.subtile = recorded
+
+    named(dra.Tilesets)
+    tiles(dra.Tilesets)
+    named(va.Pair)
+    tiles(va.Pair)
+    pair_entries = va.Pair.entries
+
+    def pair_read(self, metatile):
+        which = 0 if metatile < 512 else 1
+        note("E", self._read_names[which], metatile - which * 512)
+        return pair_entries(self, metatile)
+    va.Pair.entries = pair_read
+    layout_entries = vb.LayoutArt.entries
+
+    def layout_read(self, m):
+        which = 0 if m < 512 else 1
+        note("E", self.primary if which == 0 or not self.has_secondary else self.secondary,
+             m - which * 512)
+        return layout_entries(self, m)
+    vb.LayoutArt.entries = layout_read
+
+
+def _write_reads(path, directory):
+    """What the run read (see _record_reads), all processes', into `path`."""
+    read = set()
+    for name in os.listdir(directory):
+        with open(os.path.join(directory, name)) as f:
+            read.update(line.strip() for line in f if line.strip())
+        os.remove(os.path.join(directory, name))
+    os.rmdir(directory)
+    with open(path, "w") as f:
+        f.write("".join(r + "\n" for r in sorted(read)))
+
+
+if os.environ.get("VOXEL_RELIEF_READS"):
+    _record_reads(os.environ["VOXEL_RELIEF_READS"] + ".d")
+
 # The commonest item of a list, ties broken as 64-bit CPython breaks them
 # for max(set(seq), key=seq.count): by the order of the set's hash table.
 # That order follows hash(), which is 32-bit on WebAssembly (the web
@@ -1084,6 +1163,7 @@ def world_levels():
     import voxel_terraces
     terraced = {g for g in candidates if g in COUNTED_GROUPS
                 and set(DRAWN[g]) & set(voxel_terraces.chosen_layouts())}
+    prepare_groups(candidates)
     local = {}
     for g in candidates:
         prep = drawn_prepare(g)
@@ -1809,6 +1889,47 @@ def split_wrapped(region, sizes, kind, side, south, W, H):
             break
         if not done:
             return made
+
+
+def _prepare_one(name):
+    """A worker's part of prepare_groups: one group's reading, and the pier
+    cells drawn_canvas found in it (read again by pier_ends)."""
+    return name, drawn_prepare(name), _PIER.get(name)
+
+
+def prepare_groups(names, jobs=None):
+    """drawn_prepare for each of `names` not read yet, side by side in `jobs`
+    processes (VOXEL_JOBS, or every core; 1: here, one after another): each
+    group's reading is its own (world_levels weighs them together only
+    after). A worker leaves this process what drawn_prepare would have: the
+    reading (_PREP) and the group's pier cells (_PIER); the layouts' art
+    (_ART), as with VOXEL_RELIEF_CACHE, is read here again."""
+    todo = [n for n in dict.fromkeys(names) if n not in _PREP]
+    if jobs is None:
+        jobs = int(os.environ.get("VOXEL_JOBS", "0")) or os.cpu_count() or 1
+    jobs = max(1, min(jobs, len(todo)))
+    if jobs == 1:
+        for name in todo:
+            drawn_prepare(name)
+        return
+    import multiprocessing
+    # what is printed so far out first: a worker forked with it still
+    # buffered would print it again
+    sys.stdout.flush()
+    sys.stderr.flush()
+    # the parent's objects as they are, out of the collector's reach: a
+    # worker that collected them would write to every page of them, and own a
+    # copy of the whole parent
+    import gc
+    gc.freeze()
+    with multiprocessing.get_context("fork").Pool(jobs) as pool:
+        for name, prep, pier in pool.imap(_prepare_one, todo):
+            _PREP[name] = prep
+            if pier is not None:
+                _PIER[name] = pier
+            for lid in DRAWN[name]:
+                if lid not in _ART:
+                    layout_art(lid)
 
 
 def drawn_prepare(name):
@@ -4333,6 +4454,8 @@ def main():
         # the hand corrections (assets/voxel/relief_fixes.json) over the drawing's
         if not os.environ.get("VOXEL_RELIEF_NO_FIXES"):
             voxel_relief_fixes.apply_file(args.output)
+    if os.environ.get("VOXEL_RELIEF_READS"):
+        _write_reads(os.environ["VOXEL_RELIEF_READS"], os.environ["VOXEL_RELIEF_READS"] + ".d")
 
 
 if __name__ == "__main__":
