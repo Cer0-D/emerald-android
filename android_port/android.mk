@@ -104,6 +104,11 @@ BOTTOM_ART_FLAGS := --height 280
 
 include full.mk
 
+# The bottom screen draws the version next to the logo (CTR_APP_VERSION, given
+# to this object alone in full.mk): made again when the version is, which
+# build/config does not see (0.5.0.2 was released saying v0.5.0.1 there).
+build/bridge/3ds_bottom_ui.o: $(ANDROID_PORT)/subversion.txt $(ANDROID_PORT)/../3ds_port/Makefile
+
 # ── Android native backend ─────────────────────────────────────────────────
 ANDROID_SRCS := $(wildcard $(ANDROID_PORT)/src/*.c)
 ANDROID_OBJS := $(patsubst $(ANDROID_PORT)/src/%.c,build/android/%.o,$(ANDROID_SRCS))
