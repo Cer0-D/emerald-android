@@ -40,32 +40,6 @@ new angle, rendered at the device's full resolution.
 Updating from 0.5.0.2 keeps your save. The app asks for the ROM once more,
 as this version builds its game data anew.
 
-## What's new in 0.5.0.2
-
-- **Follower Pokémon.** Your lead Pokémon walks behind you, with its
-  HeartGold/SoulSilver sprite, and talks when you speak to it. Turn it on in
-  OPTION → WORLD → FIELD → **FOLLOWER**. The sprites and texts are downloaded
-  by the app the first time it needs them (see [Follower Pokémon](#follower-pokémon)).
-- **French, Italian, German and Spanish cartridges.** Besides the English
-  one, the app now plays these: pick your own cartridge's ROM and the app
-  recognizes its language and plays the game in it. French, Italian and
-  German come from [@andyst-dev](https://github.com/andyst-dev)'s work.
-- **HD battle info boxes**, drawn like the HD text box instead of the
-  magnified GBA ones.
-- **Fixes:**
-  - **The PC is no longer broken.** In 0.5.0.1 the Pokémon Center's PC
-    showed nothing and could not be used. It is now fully functional: the
-    Pokémon Storage System, the item storage and the other full-screen menus
-    open on the bottom screen, scaled up to its width, and respond to the
-    buttons and to touch. The item shown in the item storage sits in its box.
-  - PokéNav calls appear at the bottom of the screen, with their icon in
-    place and nothing left behind after the call.
-  - The cave entrance transition no longer shows a band of noise.
-
-Updating from 0.5.0.1 keeps your save: it becomes the English game's save.
-The app asks for the ROM once more, as this version builds its game data
-anew.
-
 ## Goal of the project
 
 The goal is to **port everything Emerald 3DS does to Android**. Every feature
